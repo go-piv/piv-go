@@ -1,4 +1,4 @@
-package piv
+package ykpiv
 
 // https://golang.org/s/generatedcode
 

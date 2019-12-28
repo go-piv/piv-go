@@ -8,7 +8,7 @@ val = 0
 desc = ""
 
 with open("pcsc_errors.go", 'w+') as f:
-    print("""package piv
+    print("""package ykpiv
 
 // https://golang.org/s/generatedcode
 
