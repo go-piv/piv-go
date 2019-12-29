@@ -20,6 +20,26 @@ union u_APDU {
 };
 */
 
+const (
+	DefaultPIN           = "123456"
+	DefaultPUK           = "12345678"
+	DefaultManagementKey = "010203040506070801020304050607080102030405060708"
+)
+
+// ErrWrongPIN is the error returned when a login attempt fails because of an
+// invalid PIN.
+type ErrWrongPIN struct {
+	Retries int
+}
+
+func (e *ErrWrongPIN) Error() string {
+	s := "retries"
+	if e.Retries == 1 {
+		s = "retry"
+	}
+	return fmt.Sprintf("wrong pin, %d %s left", e.Retries, s)
+}
+
 func Smartcards() ([]string, error) {
 	ctx, err := newSCContext()
 	if err != nil {
@@ -117,6 +137,61 @@ func (yk *Yubikey) Serial() (uint32, error) {
 	return ykSerial(tx, yk.version)
 }
 
+func isRetryErr(err error) (int, bool) {
+	var e *adpuErr
+	if !errors.As(err, &e) {
+		return 0, false
+	}
+
+	// "Authentication method blocked"
+	if e.sw1 == 0x69 && e.sw2 == 0x83 {
+		return 0, true
+	}
+
+	// Verify fail status codes 0xc[0-f] communicate the number of retries.
+	if e.sw1 != 0x63 || (e.sw2&0xf0 != 0xc0) {
+		return 0, false
+	}
+	return int(e.sw2 ^ 0xc0), true
+}
+
+// https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-1.7.0/lib/internal.h#L129
+const maxPINSize = 8
+
+func (yk *Yubikey) Login(pin string) error {
+	if len(pin) == 0 {
+		return fmt.Errorf("pin cannot be empty")
+	}
+	if len(pin) > maxPINSize {
+		return fmt.Errorf("pin longer than max size %d", maxPINSize)
+	}
+
+	// PIN is always padded with 0xff
+	var data [maxPINSize]byte
+	for i := range data {
+		if i < len(pin) {
+			data[i] = pin[i]
+		} else {
+			data[i] = 0xff
+		}
+	}
+
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+
+	cmd := adpu{instruction: insVerify, param2: 0x80, data: data[:]}
+	if _, err := tx.Transmit(cmd); err != nil {
+		if n, ok := isRetryErr(err); ok {
+			return &ErrWrongPIN{Retries: n}
+		}
+		return fmt.Errorf("verify pin: %v", err)
+	}
+	return nil
+}
+
 // PINRetries returns the number of attempts remain to enter the correct PIN.
 func (yk *Yubikey) PINRetries() (int, error) {
 	tx, err := yk.begin()
@@ -129,16 +204,10 @@ func (yk *Yubikey) PINRetries() (int, error) {
 	if err == nil {
 		return 0, fmt.Errorf("expected error code from empty pin")
 	}
-	var e *adpuErr
-	if !errors.As(err, &e) {
-		return 0, fmt.Errorf("pin state: %v", err)
+	if retries, ok := isRetryErr(err); ok {
+		return retries, nil
 	}
-
-	// Verify fail status codes 0xc[0-f] communicate the number of retries.
-	if e.sw1 != 0x63 || (e.sw2&0xf0 != 0xc0) {
-		return 0, fmt.Errorf("invalid response: %v", err)
-	}
-	return int(e.sw2 ^ 0xc0), nil
+	return 0, fmt.Errorf("invalid response: %v", err)
 }
 
 type version struct {

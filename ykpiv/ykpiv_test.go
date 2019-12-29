@@ -69,3 +69,12 @@ func TestYubikeyPINRetries(t *testing.T) {
 		t.Fatalf("invalid number of retries: %d", retries)
 	}
 }
+
+func TestYubikeyLogin(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+
+	if err := yk.Login(DefaultPIN); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+}
