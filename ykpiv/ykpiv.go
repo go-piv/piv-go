@@ -2,6 +2,7 @@ package ykpiv
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 )
 
@@ -106,6 +107,7 @@ func (yk *Yubikey) begin() (*scTx, error) {
 	return tx, nil
 }
 
+// Serial returns the Yubikey's serial number.
 func (yk *Yubikey) Serial() (uint32, error) {
 	tx, err := yk.begin()
 	if err != nil {
@@ -113,6 +115,30 @@ func (yk *Yubikey) Serial() (uint32, error) {
 	}
 	defer tx.Close()
 	return ykSerial(tx, yk.version)
+}
+
+// PINRetries returns the number of attempts remain to enter the correct PIN.
+func (yk *Yubikey) PINRetries() (int, error) {
+	tx, err := yk.begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Close()
+	cmd := adpu{instruction: insVerify, param2: 0x80}
+	_, err = tx.Transmit(cmd)
+	if err == nil {
+		return 0, fmt.Errorf("expected error code from empty pin")
+	}
+	var e *adpuErr
+	if !errors.As(err, &e) {
+		return 0, fmt.Errorf("pin state: %v", err)
+	}
+
+	// Verify fail status codes 0xc[0-f] communicate the number of retries.
+	if e.sw1 != 0x63 || (e.sw2&0xf0 != 0xc0) {
+		return 0, fmt.Errorf("invalid response: %v", err)
+	}
+	return int(e.sw2 ^ 0xc0), nil
 }
 
 type version struct {

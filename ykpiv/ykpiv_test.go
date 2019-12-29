@@ -57,3 +57,15 @@ func TestYubikeySerial(t *testing.T) {
 		t.Fatalf("getting serial number: %v", err)
 	}
 }
+
+func TestYubikeyPINRetries(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+	retries, err := yk.PINRetries()
+	if err != nil {
+		t.Fatalf("getting retries: %v", err)
+	}
+	if retries < 0 || retries > 15 {
+		t.Fatalf("invalid number of retries: %d", retries)
+	}
+}
