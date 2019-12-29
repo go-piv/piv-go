@@ -150,17 +150,19 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	return false, nil, &adpuErr{sw1, sw2}
 }
 
+const maxAPDUDataSize = 0xff
+
 func (t *scTx) Transmit(d adpu) ([]byte, error) {
 	data := d.data
 	var resp []byte
-	for len(data) > 0xff {
-		req := make([]byte, 5+0xff)
-		req[0] = 0x10
+	for len(data) > maxAPDUDataSize {
+		req := make([]byte, 5+maxAPDUDataSize)
+		req[0] = 0x10 // ISO/IEC 7816-4 5.1.1
 		req[1] = d.instruction
 		req[2] = d.param1
 		req[3] = d.param2
-		copy(req[5:], data[:0xff])
-		data = data[0xff:]
+		copy(req[5:], data[:maxAPDUDataSize])
+		data = data[maxAPDUDataSize:]
 		_, r, err := t.transmit(req)
 		if err != nil {
 			return nil, err
