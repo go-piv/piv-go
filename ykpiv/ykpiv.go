@@ -149,6 +149,9 @@ func (yk *Yubikey) Serial() (uint32, error) {
 	return ykSerial(tx, yk.version)
 }
 
+// isRetryErr inspects the result of (*scTx).Transmit to determine if the error
+// code contains information contains information about the number of PIN retries
+// left on the card.
 func isRetryErr(err error) (int, bool) {
 	var e *adpuErr
 	if !errors.As(err, &e) {
@@ -161,10 +164,10 @@ func isRetryErr(err error) (int, bool) {
 	}
 
 	// Verify fail status codes 0xc[0-f] communicate the number of retries.
-	if e.sw1 != 0x63 || (e.sw2&0xf0 != 0xc0) {
-		return 0, false
+	if e.sw1 == 0x63 && (e.sw2&0xf0 == 0xc0) {
+		return int(e.sw2 ^ 0xc0), true
 	}
-	return int(e.sw2 ^ 0xc0), true
+	return 0, false
 }
 
 // https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-1.7.0/lib/internal.h#L129
