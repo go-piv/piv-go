@@ -66,12 +66,41 @@ func TestYubikeySerial(t *testing.T) {
 func TestYubikeyPINRetries(t *testing.T) {
 	yk, close := newTestYubikey(t)
 	defer close()
-	retries, err := yk.PINRetries()
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Close()
+
+	retries, err := ykPINRetries(tx)
 	if err != nil {
 		t.Fatalf("getting retries: %v", err)
 	}
 	if retries < 0 || retries > 15 {
 		t.Fatalf("invalid number of retries: %d", retries)
+	}
+}
+
+func TestYubikeyReset(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	err = ykReset(tx)
+	tx.Close()
+	if err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+
+	tx, err = yk.begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Close()
+	if err := ykLogin(tx, DefaultPIN); err != nil {
+		t.Errorf("login with default pin failed: %v", err)
 	}
 }
 

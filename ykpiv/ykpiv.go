@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 )
 
 const (
@@ -227,8 +228,12 @@ func (yk *Yubikey) PINRetries() (int, error) {
 		return 0, err
 	}
 	defer tx.Close()
+	return ykPINRetries(tx)
+}
+
+func ykPINRetries(tx *scTx) (int, error) {
 	cmd := adpu{instruction: insVerify, param2: 0x80}
-	_, err = ykTransmit(tx, cmd)
+	_, err := ykTransmit(tx, cmd)
 	if err == nil {
 		return 0, fmt.Errorf("expected error code from empty pin")
 	}
@@ -237,6 +242,57 @@ func (yk *Yubikey) PINRetries() (int, error) {
 		return e.Retries, nil
 	}
 	return 0, fmt.Errorf("invalid response: %v", err)
+}
+
+func ykReset(tx *scTx) error {
+	maxPIN := big.NewInt(100_000_000)
+	pinInt, err := rand.Int(rand.Reader, maxPIN)
+	if err != nil {
+		return fmt.Errorf("generating random pin: %v", err)
+	}
+	pukInt, err := rand.Int(rand.Reader, maxPIN)
+	if err != nil {
+		return fmt.Errorf("generating random puk: %v", err)
+	}
+
+	pin := pinInt.String()
+	puk := pukInt.String()
+
+	for {
+		err := ykLogin(tx, pin)
+		if err == nil {
+			// TODO: do we care about a 1/100million chance?
+			return fmt.Errorf("expected error with random pin")
+		}
+		var e *ErrWrongPIN
+		if !errors.As(err, &e) {
+			return fmt.Errorf("blocking pin: %v", err)
+		}
+		if e.Retries == 0 {
+			break
+		}
+	}
+
+	for {
+		err := ykChangePUK(tx, puk, puk)
+		if err == nil {
+			// TODO: do we care about a 1/100million chance?
+			return fmt.Errorf("expected error with random puk")
+		}
+		var e *ErrWrongPIN
+		if !errors.As(err, &e) {
+			return fmt.Errorf("blocking puk: %v", err)
+		}
+		if e.Retries == 0 {
+			break
+		}
+	}
+
+	cmd := adpu{instruction: insReset}
+	if _, err := ykTransmit(tx, cmd); err != nil {
+		return fmt.Errorf("reseting yubikey: %v", err)
+	}
+	return nil
 }
 
 type version struct {
