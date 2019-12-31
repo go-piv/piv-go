@@ -65,14 +65,14 @@ func (e *ErrWrongPIN) Error() string {
 	return fmt.Sprintf("wrong pin, %d %s left", e.Retries, s)
 }
 
-func ykTransmit(tx *scTx, cmd adpu) ([]byte, error) {
+func ykTransmit(tx *scTx, cmd apdu) ([]byte, error) {
 	resp, err := tx.Transmit(cmd)
 	if err == nil {
 		return resp, nil
 	}
 
 	// Check for specific errors.
-	var e *adpuErr
+	var e *apduErr
 	if !errors.As(err, &e) {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func ykLogin(tx *scTx, pin string) error {
 		return err
 	}
 
-	cmd := adpu{instruction: insVerify, param2: 0x80, data: data}
+	cmd := apdu{instruction: insVerify, param2: 0x80, data: data}
 	if _, err := ykTransmit(tx, cmd); err != nil {
 		return fmt.Errorf("verify pin: %w", err)
 	}
@@ -251,7 +251,7 @@ func (yk *Yubikey) PINRetries() (int, error) {
 }
 
 func ykPINRetries(tx *scTx) (int, error) {
-	cmd := adpu{instruction: insVerify, param2: 0x80}
+	cmd := apdu{instruction: insVerify, param2: 0x80}
 	_, err := ykTransmit(tx, cmd)
 	if err == nil {
 		return 0, fmt.Errorf("expected error code from empty pin")
@@ -322,7 +322,7 @@ func ykReset(tx *scTx) error {
 		}
 	}
 
-	cmd := adpu{instruction: insReset}
+	cmd := apdu{instruction: insReset}
 	if _, err := ykTransmit(tx, cmd); err != nil {
 		return fmt.Errorf("reseting yubikey: %v", err)
 	}
@@ -352,7 +352,7 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
 
 	// request a witness
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insAuthenticate,
 		param1:      alg3DES,
 		param2:      keyCardManagement,
@@ -408,7 +408,7 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 	)
 	data = append(data, challenge...)
 
-	cmd = adpu{
+	cmd = apdu{
 		instruction: insAuthenticate,
 		param1:      alg3DES,
 		param2:      keyCardManagement,
@@ -439,7 +439,7 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 // ykSetManagementKey updates the management key to a new key. This requires
 // authenticating with the existing management key.
 func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insSetMGMKey,
 		param1:      0xff,
 		param2:      0xff,
@@ -465,7 +465,7 @@ func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
 	if err != nil {
 		return fmt.Errorf("encoding new pin: %v", err)
 	}
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insChangeReference,
 		param2:      0x80,
 		data:        append(oldPINData, newPINData...),
@@ -483,7 +483,7 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 	if err != nil {
 		return fmt.Errorf("encoding new pin: %v", err)
 	}
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insResetRetry,
 		param2:      0x80,
 		data:        append(pukData, newPINData...),
@@ -501,7 +501,7 @@ func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
 	if err != nil {
 		return fmt.Errorf("encoding new puk: %v", err)
 	}
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insChangeReference,
 		param2:      0x81,
 		data:        append(oldPUKData, newPUKData...),
@@ -511,7 +511,7 @@ func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
 }
 
 func ykSelectApplication(tx *scTx, id []byte) error {
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insSelectApplication,
 		param1:      0x04,
 		data:        id[:],
@@ -523,7 +523,7 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 }
 
 func ykVersion(tx *scTx) (*version, error) {
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insGetVersion,
 	}
 	resp, err := ykTransmit(tx, cmd)
@@ -537,7 +537,7 @@ func ykVersion(tx *scTx) (*version, error) {
 }
 
 func ykSerial(tx *scTx, v *version) (uint32, error) {
-	cmd := adpu{instruction: insGetSerial}
+	cmd := apdu{instruction: insGetSerial}
 	if v.major < 5 {
 		// Earlier versions of Yubikeys required using the yubikey applet to get
 		// the serial number. Newer ones have this built into the PIV applet.
@@ -545,7 +545,7 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 			return 0, fmt.Errorf("selecting yubikey applet: %v", err)
 		}
 		defer ykSelectApplication(tx, aidPIV[:])
-		cmd = adpu{instruction: 0x01, param1: 0x10}
+		cmd = apdu{instruction: 0x01, param1: 0x10}
 	}
 	resp, err := ykTransmit(tx, cmd)
 	if err != nil {
@@ -560,7 +560,7 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 // ykChangeManagementKey sets the Management Key to the new key provided. The
 // user must have authenticated with the existing key first.
 func ykChangeManagementKey(tx *scTx, key [24]byte) error {
-	cmd := adpu{
+	cmd := apdu{
 		instruction: insSetMGMKey,
 		param1:      0xff,
 		param2:      0xff, // TODO: support touch policy

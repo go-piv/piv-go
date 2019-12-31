@@ -31,12 +31,12 @@ func scCheck(rc C.int) error {
 	return &scErr{rc}
 }
 
-type adpuErr struct {
+type apduErr struct {
 	sw1 byte
 	sw2 byte
 }
 
-func (a *adpuErr) Error() string {
+func (a *apduErr) Error() string {
 	// TODO: Generate error messages
 	// https://www.eftlab.com/knowledge-base/complete-list-of-apdu-responses/
 	return fmt.Sprintf("command failed: sw1=0x%02x, sw2=0x%02x", a.sw1, a.sw2)
@@ -117,7 +117,7 @@ func (t *scTx) Close() error {
 	return scCheck(C.SCardEndTransaction(t.h, C.SCARD_LEAVE_CARD))
 }
 
-type adpu struct {
+type apdu struct {
 	instruction byte
 	param1      byte
 	param2      byte
@@ -147,12 +147,12 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	if sw1 == 0x61 {
 		return true, resp[:respN-2], nil
 	}
-	return false, nil, &adpuErr{sw1, sw2}
+	return false, nil, &apduErr{sw1, sw2}
 }
 
 const maxAPDUDataSize = 0xff
 
-func (t *scTx) Transmit(d adpu) ([]byte, error) {
+func (t *scTx) Transmit(d apdu) ([]byte, error) {
 	data := d.data
 	var resp []byte
 	for len(data) > maxAPDUDataSize {
