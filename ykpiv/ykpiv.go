@@ -12,11 +12,26 @@ import (
 )
 
 const (
+	// DefaultPIN for the PIV applet. The PIN is used to change the Management Key,
+	// and slots can optionally require it to perform signing operations.
+	//
+	// For compatibility, the PIN should be 1-8 numeric characters.
 	DefaultPIN = "123456"
+	// DefaultPUK for the PIV applet. The PUK is only used to reset the PIN when
+	// the card's PIN retries have been exhausted.
+	//
+	// For compatibility, the PUK should be 1-8 numeric characters.
 	DefaultPUK = "12345678"
 )
 
 var (
+	// DefaultManagementKey for the PIV applet. The Management Key is a Triple-DES
+	// key required for slot actions such as generating keys, setting certificates,
+	// and signing.
+	//
+	// Yubikey's PIV tools can optionally derive the Management Key from the PIN,
+	// storing a salt on the Yubikey. This functionality is currently unsupported
+	// by this package.
 	DefaultManagementKey = [24]byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -25,7 +40,7 @@ var (
 )
 
 // ErrWrongPIN is the error returned when a login attempt fails because of an
-// invalid PIN.
+// invalid PIN or PUK.
 //
 // Use errors.As when checking for this error return.
 //
@@ -41,6 +56,7 @@ type ErrWrongPIN struct {
 	Retries int
 }
 
+// Error reports the number of retries left for a PIN or PUK.
 func (e *ErrWrongPIN) Error() string {
 	s := "retries"
 	if e.Retries == 1 {
@@ -72,7 +88,8 @@ func ykTransmit(tx *scTx, cmd adpu) ([]byte, error) {
 	return nil, err
 }
 
-func Smartcards() ([]string, error) {
+// SmartCards lists all available smart cards.
+func SmartCards() ([]string, error) {
 	ctx, err := newSCContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pscs: %v", err)
@@ -118,6 +135,7 @@ const (
 	insGetSerial     = 0xf8
 )
 
+// Yubikey is an open connection to a Yubikey smart card.
 type Yubikey struct {
 	ctx *scContext
 	h   *scHandle
@@ -126,9 +144,10 @@ type Yubikey struct {
 	version *version
 }
 
-func (y *Yubikey) Close() error {
-	err1 := y.h.Close()
-	err2 := y.ctx.Close()
+// Close releases the connection to the smart card.
+func (yk *Yubikey) Close() error {
+	err1 := yk.h.Close()
+	err2 := yk.ctx.Close()
 	if err1 == nil {
 		return err2
 	}
@@ -138,13 +157,13 @@ func (y *Yubikey) Close() error {
 func newYubikey(card string) (*Yubikey, error) {
 	ctx, err := newSCContext()
 	if err != nil {
-		return nil, fmt.Errorf("connecting to smartcard daemon: %v", err)
+		return nil, fmt.Errorf("connecting to smart card daemon: %v", err)
 	}
 
 	h, err := ctx.Connect(card)
 	if err != nil {
 		ctx.Close()
-		return nil, fmt.Errorf("connecting to smartcard: %v", err)
+		return nil, fmt.Errorf("connecting to smart card: %v", err)
 	}
 
 	yk := &Yubikey{ctx: ctx, h: h}
@@ -165,7 +184,7 @@ func newYubikey(card string) (*Yubikey, error) {
 func (yk *Yubikey) begin() (*scTx, error) {
 	tx, err := yk.h.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("beginning smartcard transaction: %v", err)
+		return nil, fmt.Errorf("beginning smart card transaction: %v", err)
 	}
 	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
 		tx.Close()
@@ -221,7 +240,7 @@ func ykLogin(tx *scTx, pin string) error {
 	return nil
 }
 
-// PINRetries returns the number of attempts remain to enter the correct PIN.
+// PINRetries returns the number of attempts remaining to enter the correct PIN.
 func (yk *Yubikey) PINRetries() (int, error) {
 	tx, err := yk.begin()
 	if err != nil {
@@ -244,7 +263,22 @@ func ykPINRetries(tx *scTx) (int, error) {
 	return 0, fmt.Errorf("invalid response: %v", err)
 }
 
+// Reset resets the Yubikey PIV applet to its factory settings, wiping all slots
+// and resetting the PIN, PUK, and Management Key to their default values. This
+// does NOT affect data on other applets, such as GPG or U2F.
+func (yk *Yubikey) Reset() error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykReset(tx)
+}
+
 func ykReset(tx *scTx) error {
+	// Reset only works if both the PIN and PUK are blocked. Before resetting,
+	// try the wrong PIN and PUK multiple times to block them.
+
 	maxPIN := big.NewInt(100_000_000)
 	pinInt, err := rand.Int(rand.Reader, maxPIN)
 	if err != nil {
@@ -515,10 +549,27 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 	}
 	resp, err := ykTransmit(tx, cmd)
 	if err != nil {
-		return 0, fmt.Errorf("smartcard command: %v", err)
+		return 0, fmt.Errorf("smart card command: %v", err)
 	}
 	if n := len(resp); n != 4 {
 		return 0, fmt.Errorf("expected 4 byte serial number, got %d", n)
 	}
 	return binary.BigEndian.Uint32(resp), nil
+}
+
+// ykChangeManagementKey sets the Management Key to the new key provided. The
+// user must have logged in with the PIN before calling this method.
+func ykChangeManagementKey(tx *scTx, key [24]byte) error {
+	cmd := adpu{
+		instruction: insSetMGMKey,
+		param1:      0xff,
+		param2:      0xff, // TODO: support touch policy
+		data: append([]byte{
+			alg3DES, keyCardManagement, byte(len(key)),
+		}, key[:]...),
+	}
+	if _, err := ykTransmit(tx, cmd); err != nil {
+		return fmt.Errorf("command failed: %v", err)
+	}
+	return nil
 }

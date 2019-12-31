@@ -23,14 +23,14 @@ func testGetVersion(t *testing.T, h *scHandle) {
 
 func TestGetVersion(t *testing.T) { runHandleTest(t, testGetVersion) }
 
-func TestSmartcards(t *testing.T) {
-	if _, err := Smartcards(); err != nil {
+func TestSmartCards(t *testing.T) {
+	if _, err := SmartCards(); err != nil {
 		t.Fatalf("listing cards: %v", err)
 	}
 }
 
 func newTestYubikey(t *testing.T) (*Yubikey, func()) {
-	cards, err := Smartcards()
+	cards, err := SmartCards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
 	}
