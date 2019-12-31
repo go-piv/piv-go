@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"math/bits"
 	"testing"
 )
 
@@ -243,5 +244,40 @@ func TestYubikeyChangePUK(t *testing.T) {
 	}
 	if err := ykChangePUK(tx, newPUK, DefaultPUK); err != nil {
 		t.Fatalf("resetting puk: %v", err)
+	}
+}
+
+func TestChangeManagementKey(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+
+	var newKey [24]byte
+	if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
+		t.Fatalf("generating new management key: %v", err)
+	}
+	// Apply odd-parity
+	for i, b := range newKey {
+		if bits.OnesCount8(uint8(b))%2 == 0 {
+			newKey[i] = b ^ 1 // flip least significant bit
+		}
+	}
+
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Close()
+
+	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+		t.Fatalf("authenticating with default management key: %v", err)
+	}
+	if err := ykChangeManagementKey(tx, newKey); err != nil {
+		t.Fatalf("changing management key: %v", err)
+	}
+	if err := ykAuthenticate(tx, newKey); err != nil {
+		t.Errorf("failed to authenticate with new management key: %v", err)
+	}
+	if err := ykChangeManagementKey(tx, DefaultManagementKey); err != nil {
+		t.Fatalf("resetting management key: %v", err)
 	}
 }

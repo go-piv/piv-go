@@ -558,14 +558,14 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 }
 
 // ykChangeManagementKey sets the Management Key to the new key provided. The
-// user must have logged in with the PIN before calling this method.
+// user must have authenticated with the existing key first.
 func ykChangeManagementKey(tx *scTx, key [24]byte) error {
 	cmd := adpu{
 		instruction: insSetMGMKey,
 		param1:      0xff,
 		param2:      0xff, // TODO: support touch policy
 		data: append([]byte{
-			alg3DES, keyCardManagement, byte(len(key)),
+			alg3DES, keyCardManagement, 24,
 		}, key[:]...),
 	}
 	if _, err := ykTransmit(tx, cmd); err != nil {
