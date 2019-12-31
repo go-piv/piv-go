@@ -2,6 +2,7 @@ package ykpiv
 
 import (
 	"crypto/rand"
+	"errors"
 	"io"
 	"testing"
 )
@@ -129,5 +130,89 @@ func TestYubikeySetManagementKey(t *testing.T) {
 	}
 	if err := ykSetManagementKey(tx, DefaultManagementKey, false); err != nil {
 		t.Fatalf("setting management key: %v", err)
+	}
+}
+
+func TestYubikeyUnblockPIN(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Close()
+
+	badPIN := "0"
+	for {
+		err := ykLogin(tx, badPIN)
+		if err == nil {
+			t.Fatalf("login with bad pin succeeded")
+		}
+		var e *ErrWrongPIN
+		if !errors.As(err, &e) {
+			t.Fatalf("error returned was not a wrong pin error: %v", err)
+		}
+		if e.Retries == 0 {
+			break
+		}
+	}
+
+	if err := ykUnblockPIN(tx, DefaultPUK, DefaultPIN); err != nil {
+		t.Fatalf("unblocking pin: %v", err)
+	}
+	if err := ykLogin(tx, DefaultPIN); err != nil {
+		t.Errorf("failed to login with pin after unblock: %v", err)
+	}
+}
+
+func TestYubikeyChangePIN(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+
+	newPIN := "654321"
+
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Close()
+
+	if err := ykChangePIN(tx, newPIN, newPIN); err == nil {
+		t.Errorf("successfully changed pin with invalid pin, expected error")
+	}
+
+	if err := ykChangePIN(tx, DefaultPIN, newPIN); err != nil {
+		t.Fatalf("changing pin: %v", err)
+	}
+	if err := ykLogin(tx, newPIN); err != nil {
+		t.Errorf("failed to login with new pin: %v", err)
+	}
+	if err := ykChangePIN(tx, newPIN, DefaultPIN); err != nil {
+		t.Fatalf("resetting pin: %v", err)
+	}
+}
+
+func TestYubikeyChangePUK(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+
+	newPUK := "87654321"
+
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	defer tx.Close()
+
+	if err := ykChangePUK(tx, newPUK, newPUK); err == nil {
+		t.Errorf("successfully changed puk with invalid puk, expected error")
+	}
+
+	if err := ykChangePUK(tx, DefaultPUK, newPUK); err != nil {
+		t.Fatalf("changing puk: %v", err)
+	}
+	if err := ykChangePUK(tx, newPUK, DefaultPUK); err != nil {
+		t.Fatalf("resetting puk: %v", err)
 	}
 }

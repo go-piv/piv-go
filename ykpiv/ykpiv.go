@@ -25,6 +25,17 @@ var (
 
 // ErrWrongPIN is the error returned when a login attempt fails because of an
 // invalid PIN.
+//
+// Use errors.As when checking for this error return.
+//
+//		err := yk.Login(badPIN)
+//		if err != nil {
+//			var e *ykpiv.ErrWrongPIN
+//			if errors.As(err, &e) {
+//				// ...
+//			}
+//		}
+//
 type ErrWrongPIN struct {
 	Retries int
 }
@@ -35,6 +46,29 @@ func (e *ErrWrongPIN) Error() string {
 		s = "retry"
 	}
 	return fmt.Sprintf("wrong pin, %d %s left", e.Retries, s)
+}
+
+func ykTransmit(tx *scTx, cmd adpu) ([]byte, error) {
+	resp, err := tx.Transmit(cmd)
+	if err == nil {
+		return resp, nil
+	}
+
+	// Check for specific errors.
+	var e *adpuErr
+	if !errors.As(err, &e) {
+		return nil, err
+	}
+	// "Authentication method blocked"
+	if e.sw1 == 0x69 && e.sw2 == 0x83 {
+		return nil, &ErrWrongPIN{0}
+	}
+
+	// Verify fail status codes 0xc[0-f] communicate the number of retries.
+	if e.sw1 == 0x63 && (e.sw2&0xf0 == 0xc0) {
+		return nil, &ErrWrongPIN{int(e.sw2 ^ 0xc0)}
+	}
+	return nil, err
 }
 
 func Smartcards() ([]string, error) {
@@ -149,60 +183,39 @@ func (yk *Yubikey) Serial() (uint32, error) {
 	return ykSerial(tx, yk.version)
 }
 
-// isRetryErr inspects the result of (*scTx).Transmit to determine if the error
-// code contains information contains information about the number of PIN retries
-// left on the card.
-func isRetryErr(err error) (int, bool) {
-	var e *adpuErr
-	if !errors.As(err, &e) {
-		return 0, false
+func encodePIN(pin string) ([]byte, error) {
+	data := []byte(pin)
+	if len(data) == 0 {
+		return nil, fmt.Errorf("pin cannot be empty")
 	}
-
-	// "Authentication method blocked"
-	if e.sw1 == 0x69 && e.sw2 == 0x83 {
-		return 0, true
+	if len(data) > 8 {
+		return nil, fmt.Errorf("pin longer than 8 bytes")
 	}
-
-	// Verify fail status codes 0xc[0-f] communicate the number of retries.
-	if e.sw1 == 0x63 && (e.sw2&0xf0 == 0xc0) {
-		return int(e.sw2 ^ 0xc0), true
+	// apply padding
+	for i := len(data); i < 8; i++ {
+		data = append(data, 0xff)
 	}
-	return 0, false
+	return data, nil
 }
 
-// https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-1.7.0/lib/internal.h#L129
-const maxPINSize = 8
-
 func (yk *Yubikey) Login(pin string) error {
-	if len(pin) == 0 {
-		return fmt.Errorf("pin cannot be empty")
-	}
-	if len(pin) > maxPINSize {
-		return fmt.Errorf("pin longer than max size %d", maxPINSize)
-	}
-
-	// PIN is always padded with 0xff
-	var data [maxPINSize]byte
-	for i := range data {
-		if i < len(pin) {
-			data[i] = pin[i]
-		} else {
-			data[i] = 0xff
-		}
-	}
-
 	tx, err := yk.begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Close()
+	return ykLogin(tx, pin)
+}
 
-	cmd := adpu{instruction: insVerify, param2: 0x80, data: data[:]}
-	if _, err := tx.Transmit(cmd); err != nil {
-		if n, ok := isRetryErr(err); ok {
-			return &ErrWrongPIN{Retries: n}
-		}
-		return fmt.Errorf("verify pin: %v", err)
+func ykLogin(tx *scTx, pin string) error {
+	data, err := encodePIN(pin)
+	if err != nil {
+		return err
+	}
+
+	cmd := adpu{instruction: insVerify, param2: 0x80, data: data}
+	if _, err := ykTransmit(tx, cmd); err != nil {
+		return fmt.Errorf("verify pin: %w", err)
 	}
 	return nil
 }
@@ -215,12 +228,13 @@ func (yk *Yubikey) PINRetries() (int, error) {
 	}
 	defer tx.Close()
 	cmd := adpu{instruction: insVerify, param2: 0x80}
-	_, err = tx.Transmit(cmd)
+	_, err = ykTransmit(tx, cmd)
 	if err == nil {
 		return 0, fmt.Errorf("expected error code from empty pin")
 	}
-	if retries, ok := isRetryErr(err); ok {
-		return retries, nil
+	var e *ErrWrongPIN
+	if errors.As(err, &e) {
+		return e.Retries, nil
 	}
 	return 0, fmt.Errorf("invalid response: %v", err)
 }
@@ -259,7 +273,7 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 			0x00, // Return encrypted random
 		},
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := ykTransmit(tx, cmd)
 	if err != nil {
 		return fmt.Errorf("get auth challenge: %v", err)
 	}
@@ -310,7 +324,7 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 		param2:      keyCardManagement,
 		data:        data,
 	}
-	resp, err = tx.Transmit(cmd)
+	resp, err = ykTransmit(tx, cmd)
 	if err != nil {
 		return fmt.Errorf("auth challenge: %v", err)
 	}
@@ -346,10 +360,64 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 	if touch {
 		cmd.param2 = 0xfe
 	}
-	if _, err := tx.Transmit(cmd); err != nil {
+	if _, err := ykTransmit(tx, cmd); err != nil {
 		return fmt.Errorf("command failed: %v", err)
 	}
 	return nil
+}
+
+func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
+	oldPINData, err := encodePIN(oldPIN)
+	if err != nil {
+		return fmt.Errorf("encoding old pin: %v", err)
+	}
+	newPINData, err := encodePIN(newPIN)
+	if err != nil {
+		return fmt.Errorf("encoding new pin: %v", err)
+	}
+	cmd := adpu{
+		instruction: insChangeReference,
+		param2:      0x80,
+		data:        append(oldPINData, newPINData...),
+	}
+	_, err = ykTransmit(tx, cmd)
+	return err
+}
+
+func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
+	pukData, err := encodePIN(puk)
+	if err != nil {
+		return fmt.Errorf("encoding puk: %v", err)
+	}
+	newPINData, err := encodePIN(newPIN)
+	if err != nil {
+		return fmt.Errorf("encoding new pin: %v", err)
+	}
+	cmd := adpu{
+		instruction: insResetRetry,
+		param2:      0x80,
+		data:        append(pukData, newPINData...),
+	}
+	_, err = ykTransmit(tx, cmd)
+	return err
+}
+
+func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
+	oldPUKData, err := encodePIN(oldPUK)
+	if err != nil {
+		return fmt.Errorf("encoding old puk: %v", err)
+	}
+	newPUKData, err := encodePIN(newPUK)
+	if err != nil {
+		return fmt.Errorf("encoding new puk: %v", err)
+	}
+	cmd := adpu{
+		instruction: insChangeReference,
+		param2:      0x81,
+		data:        append(oldPUKData, newPUKData...),
+	}
+	_, err = ykTransmit(tx, cmd)
+	return err
 }
 
 func ykSelectApplication(tx *scTx, id []byte) error {
@@ -358,7 +426,7 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 		param1:      0x04,
 		data:        id[:],
 	}
-	if _, err := tx.Transmit(cmd); err != nil {
+	if _, err := ykTransmit(tx, cmd); err != nil {
 		return fmt.Errorf("command failed: %v", err)
 	}
 	return nil
@@ -368,7 +436,7 @@ func ykVersion(tx *scTx) (*version, error) {
 	cmd := adpu{
 		instruction: insGetVersion,
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := ykTransmit(tx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %v", err)
 	}
@@ -389,7 +457,7 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 		defer ykSelectApplication(tx, aidPIV[:])
 		cmd = adpu{instruction: 0x01, param1: 0x10}
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := ykTransmit(tx, cmd)
 	if err != nil {
 		return 0, fmt.Errorf("smartcard command: %v", err)
 	}
