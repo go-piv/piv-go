@@ -83,6 +83,9 @@ func TestYubikeyPINRetries(t *testing.T) {
 }
 
 func TestYubikeyReset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
 	yk, close := newTestYubikey(t)
 	defer close()
 	tx, err := yk.begin()
