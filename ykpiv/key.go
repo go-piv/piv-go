@@ -21,8 +21,10 @@ const (
 type Algorithm int
 
 const (
-	AlgorithmEC Algorithm = iota
-	AlgorithmRSA
+	AlgorithmEC256 Algorithm = iota
+	AlgorithmEC384
+	AlgorithmRSA1024
+	AlgorithmRSA2048
 )
 
 type PinPolicy int
@@ -58,42 +60,24 @@ var touchPolicyMap = map[TouchPolicy]byte{
 	TouchPolicyCached: 0x03,
 }
 
-func ykAlg(alg Algorithm, bits int) (byte, error) {
-	switch alg {
-	case AlgorithmEC:
-		switch bits {
-		case 256:
-			return algECCP256, nil
-		case 384:
-			return algECCP384, nil
-		default:
-			return 0, fmt.Errorf("bits for ec key must be 256 or 384")
-		}
-	case AlgorithmRSA:
-		switch bits {
-		case 1024:
-			return algRSA1024, nil
-		case 2048:
-			return algRSA2048, nil
-		default:
-			return 0, fmt.Errorf("bits for rsa key must be 1024 or 2048")
-		}
-	default:
-		return 0, fmt.Errorf("algorithm must be ec or rsa")
-	}
+var algorithmsMap = map[Algorithm]byte{
+	AlgorithmEC256:   algECCP256,
+	AlgorithmEC384:   algECCP384,
+	AlgorithmRSA1024: algRSA1024,
+	AlgorithmRSA2048: algRSA2048,
 }
 
 type keyOptions struct {
 	alg   Algorithm
-	bits  int
 	pin   PinPolicy
 	touch TouchPolicy
 }
 
 func ykGenerateKey(tx *scTx, slotID SlotID, o keyOptions) (crypto.PublicKey, error) {
-	alg, err := ykAlg(o.alg, o.bits)
-	if err != nil {
-		return nil, err
+	alg, ok := algorithmsMap[o.alg]
+	if !ok {
+		return nil, fmt.Errorf("unsupported algorithm")
+
 	}
 	tp, ok := touchPolicyMap[o.touch]
 	if !ok {
@@ -119,31 +103,27 @@ func ykGenerateKey(tx *scTx, slotID SlotID, o keyOptions) (crypto.PublicKey, err
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %v", err)
 	}
+
+	var curve elliptic.Curve
 	switch o.alg {
-	case AlgorithmRSA:
+	case AlgorithmRSA1024, AlgorithmRSA2048:
 		pub, err := decodeRSAPublic(resp)
 		if err != nil {
 			return nil, fmt.Errorf("decoding rsa public key: %v", err)
 		}
 		return pub, nil
-	case AlgorithmEC:
-		var curve elliptic.Curve
-		switch o.bits {
-		case 256:
-			curve = elliptic.P256()
-		case 384:
-			curve = elliptic.P384()
-		default:
-			return nil, fmt.Errorf("invalid curve length: %d", o.bits)
-		}
-		pub, err := decodeECPublic(resp, curve)
-		if err != nil {
-			return nil, fmt.Errorf("decoding ec public key: %v", err)
-		}
-		return pub, nil
+	case AlgorithmEC256:
+		curve = elliptic.P256()
+	case AlgorithmEC384:
+		curve = elliptic.P384()
 	default:
 		return nil, fmt.Errorf("unsupported algorithm")
 	}
+	pub, err := decodeECPublic(resp, curve)
+	if err != nil {
+		return nil, fmt.Errorf("decoding ec public key: %v", err)
+	}
+	return pub, nil
 }
 
 func unmarshalASN1(b []byte, class, tag int) (obj, rest []byte, err error) {

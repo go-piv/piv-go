@@ -11,24 +11,19 @@ func TestYubikeyGenerateKey(t *testing.T) {
 	}{
 		{
 			name: "ec_256",
-			alg:  AlgorithmEC,
-			bits: 256,
+			alg:  AlgorithmEC256,
 		},
 		{
 			name: "ec_384",
-			alg:  AlgorithmEC,
-			bits: 384,
+			alg:  AlgorithmEC384,
 		},
 		{
 			name: "rsa_1024",
-			alg:  AlgorithmRSA,
-			bits: 1024,
-			long: true,
+			alg:  AlgorithmRSA1024,
 		},
 		{
 			name: "rsa_2048",
-			alg:  AlgorithmRSA,
-			bits: 2048,
+			alg:  AlgorithmRSA2048,
 			long: true,
 		},
 	}
@@ -49,7 +44,7 @@ func TestYubikeyGenerateKey(t *testing.T) {
 				t.Fatalf("authenticating: %v", err)
 			}
 
-			key := keyOptions{alg: test.alg, bits: test.bits}
+			key := keyOptions{alg: test.alg}
 			if _, err := ykGenerateKey(tx, SlotAuthentication, key); err != nil {
 				t.Errorf("generating key: %v", err)
 			}
