@@ -2,7 +2,7 @@ package ykpiv
 
 // https://ludovicrousseau.blogspot.com/2010/04/pcsc-sample-in-c.html
 
-// #cgo LDFLAGS: -framework PCSC
+// #cgo darwin LDFLAGS: -framework PCSC
 // #include <PCSC/winscard.h>
 // #include <PCSC/wintypes.h>
 import "C"
