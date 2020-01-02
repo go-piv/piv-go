@@ -1,3 +1,5 @@
+This is not an officially supported Google product
+
 # A pure Go YubiKey PIV implementation
 
 YubiKeys implement the PIV specification for managing smart card certificates.
