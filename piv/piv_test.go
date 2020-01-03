@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"math/bits"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,9 @@ func newTestYubikey(t *testing.T) (*Yubikey, func()) {
 		t.Fatalf("listing cards: %v", err)
 	}
 	for _, card := range cards {
+		if !strings.Contains(strings.ToLower(card), "yubikey") {
+			continue
+		}
 		yk, err := newYubikey(card)
 		if err != nil {
 			t.Fatalf("getting new yubikey: %v", err)
