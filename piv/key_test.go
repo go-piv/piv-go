@@ -14,7 +14,90 @@
 
 package piv
 
-import "testing"
+import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
+	"testing"
+	"time"
+)
+
+func TestYubikeyStoreCertificate(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Close()
+
+	slot := SlotAuthentication
+
+	caPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating ca private: %v", err)
+	}
+	// Generate a self-signed certificate
+	caTmpl := &x509.Certificate{
+		Subject:               pkix.Name{CommonName: "my-ca"},
+		SerialNumber:          big.NewInt(100),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageKeyEncipherment |
+			x509.KeyUsageDigitalSignature |
+			x509.KeyUsageCertSign,
+	}
+	caCertDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, caPriv.Public(), caPriv)
+	if err != nil {
+		t.Fatalf("generating self-signed certificate: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caCertDER)
+	if err != nil {
+		t.Fatalf("parsing ca cert: %v", err)
+	}
+
+	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+		t.Fatalf("authenticating: %v", err)
+	}
+	key := keyOptions{alg: AlgorithmEC256}
+	pub, err := ykGenerateKey(tx, slot, key)
+	if err != nil {
+		t.Errorf("generating key: %v", err)
+	}
+
+	cliTmpl := &x509.Certificate{
+		Subject:      pkix.Name{CommonName: "my-client"},
+		SerialNumber: big.NewInt(101),
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	cliCertDER, err := x509.CreateCertificate(rand.Reader, cliTmpl, caCert, pub, caPriv)
+	if err != nil {
+		t.Fatalf("creating client cert: %v", err)
+	}
+	cliCert, err := x509.ParseCertificate(cliCertDER)
+	if err != nil {
+		t.Fatalf("parsing cli cert: %v", err)
+	}
+	if err := ykStoreCertificate(tx, slot, cliCert); err != nil {
+		t.Fatalf("storing client cert: %v", err)
+	}
+	gotCert, err := ykGetCertificate(tx, slot)
+	if err != nil {
+		t.Fatalf("getting client cert: %v", err)
+	}
+	if !bytes.Equal(gotCert.Raw, cliCert.Raw) {
+		t.Errorf("stored cert didn't match cert retrieved")
+	}
+}
 
 func TestYubikeyGenerateKey(t *testing.T) {
 	tests := []struct {

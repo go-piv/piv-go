@@ -164,27 +164,27 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	return false, nil, &apduErr{sw1, sw2}
 }
 
-const maxAPDUDataSize = 0xff
-
 func (t *scTx) Transmit(d apdu) ([]byte, error) {
 	data := d.data
 	var resp []byte
+	const maxAPDUDataSize = 0xff
 	for len(data) > maxAPDUDataSize {
 		req := make([]byte, 5+maxAPDUDataSize)
 		req[0] = 0x10 // ISO/IEC 7816-4 5.1.1
 		req[1] = d.instruction
 		req[2] = d.param1
 		req[3] = d.param2
+		req[4] = 0xff
 		copy(req[5:], data[:maxAPDUDataSize])
 		data = data[maxAPDUDataSize:]
 		_, r, err := t.transmit(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("transmitting initial chunk %w", err)
 		}
 		resp = append(resp, r...)
 	}
 
-	req := make([]byte, 5+len(d.data))
+	req := make([]byte, 5+len(data))
 	req[1] = d.instruction
 	req[2] = d.param1
 	req[3] = d.param2
@@ -202,7 +202,7 @@ func (t *scTx) Transmit(d apdu) ([]byte, error) {
 		var r []byte
 		hasMore, r, err = t.transmit(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading further response: %w", err)
 		}
 		resp = append(resp, r...)
 	}

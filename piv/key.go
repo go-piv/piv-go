@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
 	"math/big"
@@ -89,6 +90,83 @@ var algorithmsMap = map[Algorithm]byte{
 	AlgorithmEC384:   algECCP384,
 	AlgorithmRSA1024: algRSA1024,
 	AlgorithmRSA2048: algRSA2048,
+}
+
+func ykGetCertificate(tx *scTx, slot Slot) (*x509.Certificate, error) {
+	cmd := apdu{
+		instruction: insGetData,
+		param1:      0x3f,
+		param2:      0xff,
+		data: []byte{
+			0x5c, // Tag list
+			0x03, // Length of tag
+			byte(slot.Object >> 16),
+			byte(slot.Object >> 8),
+			byte(slot.Object),
+		},
+	}
+	resp, err := ykTransmit(tx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %v", err)
+	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=85
+	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
+	}
+	certDER, _, err := unmarshalASN1(obj, 1, 0x10) // tag 0x70
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return nil, fmt.Errorf("parsing certificate: %v", err)
+	}
+	return cert, nil
+}
+
+// marshalASN1 encodes a tag, length and data.
+//
+// TODO: clean this up and maybe switch to cryptobyte?
+func marshalASN1(tag byte, data []byte) []byte {
+	var l []byte
+	n := uint64(len(data))
+	if n < 0x80 {
+		l = []byte{byte(n)}
+	} else if len(data) < 0x100 {
+		l = []byte{0x81, byte(n)}
+	} else {
+		l = []byte{0x82, byte(n >> 8), byte(n)}
+	}
+	d := append([]byte{tag}, l...)
+	return append(d, data...)
+}
+
+func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=40
+	data := marshalASN1(0x70, cert.Raw)
+	// "for a certificate encoded in uncompressed form CertInfo shall be 0x00"
+	data = append(data, marshalASN1(0x71, []byte{0x00})...)
+	// Error Detection Code
+	data = append(data, marshalASN1(0xfe, nil)...)
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=94
+	data = append([]byte{
+		0x5c, // Tag list
+		0x03, // Length of tag
+		byte(slot.Object >> 16),
+		byte(slot.Object >> 8),
+		byte(slot.Object),
+	}, marshalASN1(0x53, data)...)
+	cmd := apdu{
+		instruction: insPutData,
+		param1:      0x3f,
+		param2:      0xff,
+		data:        data,
+	}
+	if _, err := ykTransmit(tx, cmd); err != nil {
+		return fmt.Errorf("command failed: %v", err)
+	}
+	return nil
 }
 
 type keyOptions struct {
@@ -163,6 +241,7 @@ func unmarshalASN1(b []byte, class, tag int) (obj, rest []byte, err error) {
 }
 
 func decodeECPublic(b []byte, curve elliptic.Curve) (*ecdsa.PublicKey, error) {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	r, _, err := unmarshalASN1(b, 1, 0x49)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal response: %v", err)
@@ -171,6 +250,7 @@ func decodeECPublic(b []byte, curve elliptic.Curve) (*ecdsa.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal points: %v", err)
 	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=96
 	size := curve.Params().BitSize / 8
 	if len(p) != (size*2)+1 {
 		return nil, fmt.Errorf("unexpected points length: %d", len(p))
@@ -190,6 +270,7 @@ func decodeECPublic(b []byte, curve elliptic.Curve) (*ecdsa.PublicKey, error) {
 }
 
 func decodeRSAPublic(b []byte) (*rsa.PublicKey, error) {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	r, _, err := unmarshalASN1(b, 1, 0x49)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal response: %v", err)
