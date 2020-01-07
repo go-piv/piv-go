@@ -16,7 +16,11 @@ package piv
 
 // https://ludovicrousseau.blogspot.com/2010/04/pcsc-sample-in-c.html
 
+// TODO: Figure out if linux flags should use pkg-config instead
+
 // #cgo darwin LDFLAGS: -framework PCSC
+// #cgo linux CFLAGS: -I/usr/include/PCSC
+// #cgo linux LDFLAGS: -lpcsclite
 // #include <PCSC/winscard.h>
 // #include <PCSC/wintypes.h>
 import "C"
@@ -27,8 +31,14 @@ import (
 	"unsafe"
 )
 
+const rcSuccess = C.SCARD_S_SUCCESS
+
 type scErr struct {
-	rc C.int
+	// rc holds the return code for a given call.
+	//
+	// Return codes are different types between MacOS, Linux, and Windows (int
+	// vs. long). So pcscRC is defined in OS specific files.
+	rc pcscRC
 }
 
 func (e *scErr) Error() string {
@@ -38,12 +48,6 @@ func (e *scErr) Error() string {
 	return fmt.Sprintf("unknown pcsc return code 0x%08x", e)
 }
 
-func scCheck(rc C.int) error {
-	if rc == C.SCARD_S_SUCCESS {
-		return nil
-	}
-	return &scErr{rc}
-}
 
 type apduErr struct {
 	sw1 byte

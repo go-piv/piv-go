@@ -6,6 +6,31 @@ YubiKeys implement the PIV specification for managing smart card certificates.
 This is a simpler alternative to GPG for managing asymmetric keys on a YubiKey,
 which can be used for use cases such as SSH, TLS, etc.
 
+## Installation
+
+On MacOS, piv-go doesn't require any additional packages.
+
+To build on Linux, piv-go requires PCSC lite. To install on Debian-based
+distros, run:
+
+```
+sudo apt-get install libpcsclite-dev
+```
+
+On Fedora:
+
+```
+sudo yum install pcsc-lite-devel
+```
+
+On CentOS:
+
+```
+sudo yum install 'dnf-command(config-manager)'
+sudo yum config-manager --set-enabled PowerTools
+sudo yum install pcsc-lite-devel
+```
+
 ## Why?
 
 YubiKey's C PIV library, ykpiv, is brittle. The error messages aren't terrific,
