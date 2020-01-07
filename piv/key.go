@@ -24,12 +24,22 @@ import (
 	"math/big"
 )
 
-type SlotID byte
+// Slot is a private key and certificate pair managed by the security key.
+//
+// Slot IDs can be found at:
+// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=27
+//
+// Associated object IDs for X.509 certificates can be found at:
+// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=30
+type Slot struct {
+	ID     uint32
+	Object uint32
+}
 
-const (
-	SlotAuthentication     SlotID = 0x9a
-	SlotSignature          SlotID = 0x9c
-	SlotCardAuthentication SlotID = 0x9e
+var (
+	SlotAuthentication     = Slot{0x9a, 0x5fc101}
+	SlotSignature          = Slot{0x9c, 0x5fc10a}
+	SlotCardAuthentication = Slot{0x9e, 0x5fc10b}
 )
 
 type Algorithm int
@@ -87,7 +97,7 @@ type keyOptions struct {
 	touch TouchPolicy
 }
 
-func ykGenerateKey(tx *scTx, slotID SlotID, o keyOptions) (crypto.PublicKey, error) {
+func ykGenerateKey(tx *scTx, slot Slot, o keyOptions) (crypto.PublicKey, error) {
 	alg, ok := algorithmsMap[o.alg]
 	if !ok {
 		return nil, fmt.Errorf("unsupported algorithm")
@@ -104,7 +114,7 @@ func ykGenerateKey(tx *scTx, slotID SlotID, o keyOptions) (crypto.PublicKey, err
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	cmd := apdu{
 		instruction: insGenerateAsymmetric,
-		param2:      byte(slotID),
+		param2:      byte(slot.ID),
 		data: []byte{
 			0xac,
 			0x09, // length of remaining data
