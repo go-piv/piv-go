@@ -335,6 +335,54 @@ func decodeRSAPublic(b []byte) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
 }
 
+func rsaAlg(pub *rsa.PublicKey) (byte, error) {
+	size := pub.N.BitLen()
+	switch size {
+	case 1024:
+		return algRSA1024, nil
+	case 2048:
+		return algRSA2048, nil
+	default:
+		return 0, fmt.Errorf("unsupported rsa key size: %d", size)
+	}
+}
+
+func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte, error) {
+	alg, err := rsaAlg(pub)
+	if err != nil {
+		return nil, err
+	}
+	cmd := apdu{
+		instruction: insAuthenticate,
+		param1:      alg,
+		param2:      byte(slot.ID),
+		data: marshalASN1(0x7c,
+			append([]byte{0x82, 0x00},
+				marshalASN1(0x81, data)...)),
+	}
+	resp, err := ykTransmit(tx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %v", err)
+	}
+
+	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+	decrypted, _, err := unmarshalASN1(sig, 2, 0x02) // 0x82
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response signature: %v", err)
+	}
+	// Decrypted blob contains a bunch of random data. Look for a NULL byte which
+	// indicates where the plain text starts.
+	for i := 2; i+1 < len(decrypted); i++ {
+		if decrypted[i] == 0x00 {
+			return decrypted[i+1:], nil
+		}
+	}
+	return nil, fmt.Errorf("invalid pkcs#1 v1.5 padding")
+}
+
 // PKCS#1 v15 is largely informed by the standard library
 // https://github.com/golang/go/blob/go1.13.5/src/crypto/rsa/pkcs1v15.go
 
@@ -343,17 +391,10 @@ func ykSignRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, digest []byte, opts cryp
 		return nil, fmt.Errorf("rsassa-pss signatures not supported")
 	}
 
-	var alg byte
-	size := pub.N.BitLen()
-	switch size {
-	case 1024:
-		alg = algRSA1024
-	case 2048:
-		alg = algRSA2048
-	default:
-		return nil, fmt.Errorf("unsupported rsa key size: %d", size)
+	alg, err := rsaAlg(pub)
+	if err != nil {
+		return nil, err
 	}
-
 	hash := opts.HashFunc()
 	if hash.Size() != len(digest) {
 		return nil, fmt.Errorf("input must be a hashed message")
@@ -368,7 +409,7 @@ func ykSignRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, digest []byte, opts cryp
 	copy(d[:len(prefix)], prefix)
 	copy(d[len(prefix):], digest)
 
-	paddingLen := (size / 8) - 3 - len(d)
+	paddingLen := pub.Size() - 3 - len(d)
 	if paddingLen < 0 {
 		return nil, fmt.Errorf("message too large")
 	}

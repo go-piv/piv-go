@@ -119,6 +119,60 @@ func TestYubikeySignRSA(t *testing.T) {
 	}
 }
 
+func TestYubikeyDecryptRSA(t *testing.T) {
+	tests := []struct {
+		name string
+		alg  Algorithm
+		long bool
+	}{
+		{"rsa1024", AlgorithmRSA1024, false},
+		{"rsa2048", AlgorithmRSA2048, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.long && testing.Short() {
+				t.Skip("skipping test in short mode")
+			}
+			yk, close := newTestYubikey(t)
+			defer close()
+			tx, err := yk.begin()
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer tx.Close()
+
+			slot := SlotAuthentication
+
+			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+				t.Fatalf("authenticating: %v", err)
+			}
+			key := keyOptions{alg: AlgorithmRSA1024}
+			pubKey, err := ykGenerateKey(tx, slot, key)
+			if err != nil {
+				t.Fatalf("generating key: %v", err)
+			}
+			pub, ok := pubKey.(*rsa.PublicKey)
+			if !ok {
+				t.Fatalf("public key is not an rsa key")
+			}
+
+			data := []byte("hello")
+			ct, err := rsa.EncryptPKCS1v15(rand.Reader, pub, data)
+			if err != nil {
+				t.Fatalf("encryption failed: %v", err)
+			}
+
+			got, err := ykDecryptRSA(tx, slot, pub, ct)
+			if err != nil {
+				t.Fatalf("decryption failed: %v", err)
+			}
+			if !bytes.Equal(data, got) {
+				t.Errorf("decrypt, got=%q, want=%q", got, data)
+			}
+		})
+	}
+}
+
 func TestYubikeyStoreCertificate(t *testing.T) {
 	yk, close := newTestYubikey(t)
 	defer close()
