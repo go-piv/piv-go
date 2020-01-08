@@ -17,11 +17,19 @@ package piv
 import (
 	"crypto/rand"
 	"errors"
+	"flag"
 	"io"
 	"math/bits"
 	"strings"
 	"testing"
 )
+
+var canModifyYubikey bool
+
+func init() {
+	flag.BoolVar(&canModifyYubikey, "wipe-yubikey", false,
+		"Flag required to run tests that access the yubikey")
+}
 
 func testGetVersion(t *testing.T, h *scHandle) {
 	tx, err := h.Begin()
@@ -53,6 +61,9 @@ func newTestYubikey(t *testing.T) (*Yubikey, func()) {
 	for _, card := range cards {
 		if !strings.Contains(strings.ToLower(card), "yubikey") {
 			continue
+		}
+		if !canModifyYubikey {
+			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
 		yk, err := newYubikey(card)
 		if err != nil {

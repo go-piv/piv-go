@@ -31,6 +31,22 @@ sudo yum config-manager --set-enabled PowerTools
 sudo yum install pcsc-lite-devel
 ```
 
+## Testing
+
+Tests automatically find connected available YubiKeys, but won't modify the
+smart card without the `--wipe-yubikey` flag. To let the tests modify your
+YubiKey's PIV applet, run:
+
+```
+go test -v ./piv --wipe-yubikey
+```
+
+Longer tests can be skipped with the `--test.short` flag.
+
+```
+go test -v --short ./piv --wipe-yubikey
+```
+
 ## Why?
 
 YubiKey's C PIV library, ykpiv, is brittle. The error messages aren't terrific,

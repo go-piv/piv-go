@@ -48,7 +48,6 @@ func (e *scErr) Error() string {
 	return fmt.Sprintf("unknown pcsc return code 0x%08x", e)
 }
 
-
 type apduErr struct {
 	sw1 byte
 	sw2 byte
