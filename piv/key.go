@@ -334,3 +334,87 @@ func decodeRSAPublic(b []byte) (*rsa.PublicKey, error) {
 	}
 	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
 }
+
+// PKCS#1 v15 is largely informed by the standard library
+// https://github.com/golang/go/blob/go1.13.5/src/crypto/rsa/pkcs1v15.go
+
+func ykSignRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if _, ok := opts.(*rsa.PSSOptions); ok {
+		return nil, fmt.Errorf("rsassa-pss signatures not supported")
+	}
+
+	var alg byte
+	size := pub.N.BitLen()
+	switch size {
+	case 1024:
+		alg = algRSA1024
+	case 2048:
+		alg = algRSA2048
+	default:
+		return nil, fmt.Errorf("unsupported rsa key size: %d", size)
+	}
+
+	hash := opts.HashFunc()
+	if hash.Size() != len(digest) {
+		return nil, fmt.Errorf("input must be a hashed message")
+	}
+	prefix, ok := hashPrefixes[hash]
+	if !ok {
+		return nil, fmt.Errorf("unsupported hash algorithm: crypto.Hash(%d)", hash)
+	}
+
+	// https://tools.ietf.org/pdf/rfc2313.pdf#page=9
+	d := make([]byte, len(prefix)+len(digest))
+	copy(d[:len(prefix)], prefix)
+	copy(d[len(prefix):], digest)
+
+	paddingLen := (size / 8) - 3 - len(d)
+	if paddingLen < 0 {
+		return nil, fmt.Errorf("message too large")
+	}
+
+	padding := make([]byte, paddingLen)
+	for i := range padding {
+		padding[i] = 0xff
+	}
+
+	// https://tools.ietf.org/pdf/rfc2313.pdf#page=9
+	data := append([]byte{0x00, 0x01}, padding...)
+	data = append(data, 0x00)
+	data = append(data, d...)
+
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=117
+	cmd := apdu{
+		instruction: insAuthenticate,
+		param1:      alg,
+		param2:      byte(slot.ID),
+		data: marshalASN1(0x7c,
+			append([]byte{0x82, 0x00},
+				marshalASN1(0x81, data)...)),
+	}
+	resp, err := ykTransmit(tx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %v", err)
+	}
+
+	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+	pkcs1v15Sig, _, err := unmarshalASN1(sig, 2, 0x02) // 0x82
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response signature: %v", err)
+	}
+	return pkcs1v15Sig, nil
+}
+
+var hashPrefixes = map[crypto.Hash][]byte{
+	crypto.MD5:       {0x30, 0x20, 0x30, 0x0c, 0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05, 0x05, 0x00, 0x04, 0x10},
+	crypto.SHA1:      {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14},
+	crypto.SHA224:    {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05, 0x00, 0x04, 0x1c},
+	crypto.SHA256:    {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20},
+	crypto.SHA384:    {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30},
+	crypto.SHA512:    {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+	crypto.MD5SHA1:   {}, // A special TLS case which doesn't use an ASN1 prefix.
+	crypto.RIPEMD160: {0x30, 0x20, 0x30, 0x08, 0x06, 0x06, 0x28, 0xcf, 0x06, 0x03, 0x00, 0x31, 0x04, 0x14},
+}

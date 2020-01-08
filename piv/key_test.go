@@ -16,9 +16,11 @@ package piv
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -65,6 +67,55 @@ func TestYubikeySignECDSA(t *testing.T) {
 	}
 	if !ecdsa.Verify(pub, data[:], sig.R, sig.S) {
 		t.Errorf("signature didn't match")
+	}
+}
+
+func TestYubikeySignRSA(t *testing.T) {
+	tests := []struct {
+		name string
+		alg  Algorithm
+		long bool
+	}{
+		{"rsa1024", AlgorithmRSA1024, false},
+		{"rsa2048", AlgorithmRSA2048, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.long && testing.Short() {
+				t.Skip("skipping test in short mode")
+			}
+			yk, close := newTestYubikey(t)
+			defer close()
+			tx, err := yk.begin()
+			if err != nil {
+				t.Fatalf("begin: %v", err)
+			}
+			defer tx.Close()
+
+			slot := SlotAuthentication
+
+			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+				t.Fatalf("authenticating: %v", err)
+			}
+			key := keyOptions{alg: AlgorithmRSA1024}
+			pubKey, err := ykGenerateKey(tx, slot, key)
+			if err != nil {
+				t.Fatalf("generating key: %v", err)
+			}
+			pub, ok := pubKey.(*rsa.PublicKey)
+			if !ok {
+				t.Fatalf("public key is not an rsa key")
+			}
+			data := sha256.Sum256([]byte("hello"))
+
+			out, err := ykSignRSA(tx, slot, pub, data[:], crypto.SHA256)
+			if err != nil {
+				t.Fatalf("signing failed: %v", err)
+			}
+			if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, data[:], out); err != nil {
+				t.Errorf("failed to verify signature: %v", err)
+			}
+		})
 	}
 }
 

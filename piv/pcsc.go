@@ -57,7 +57,7 @@ func (a *apduErr) Error() string {
 	// TODO: Generate error messages
 	// https://www.eftlab.com/knowledge-base/complete-list-of-apdu-responses/
 	// https://stackoverflow.com/questions/51558845/what-does-security-condition-not-satisfied-response-apdu-mean
-	return fmt.Sprintf("command failed: sw1=0x%02x, sw2=0x%02x", a.sw1, a.sw2)
+	return fmt.Sprintf("smart card response error: sw1=0x%02x, sw2=0x%02x", a.sw1, a.sw2)
 }
 
 type scContext struct {
