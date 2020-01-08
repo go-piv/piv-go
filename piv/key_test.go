@@ -19,12 +19,54 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"math/big"
 	"testing"
 	"time"
 )
+
+func TestYubikeySignECDSA(t *testing.T) {
+	yk, close := newTestYubikey(t)
+	defer close()
+	tx, err := yk.begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Close()
+
+	slot := SlotAuthentication
+
+	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+		t.Fatalf("authenticating: %v", err)
+	}
+	key := keyOptions{alg: AlgorithmEC256}
+	pubKey, err := ykGenerateKey(tx, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	pub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an ecdsa key")
+	}
+	data := sha256.Sum256([]byte("hello"))
+
+	out, err := ykSignECDSA(tx, slot, pub, data[:])
+	if err != nil {
+		t.Fatalf("signing failed: %v", err)
+	}
+	var sig struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(out, &sig); err != nil {
+		t.Fatalf("unmarshaling signature: %v", err)
+	}
+	if !ecdsa.Verify(pub, data[:], sig.R, sig.S) {
+		t.Errorf("signature didn't match")
+	}
+}
 
 func TestYubikeyStoreCertificate(t *testing.T) {
 	yk, close := newTestYubikey(t)
@@ -68,7 +110,7 @@ func TestYubikeyStoreCertificate(t *testing.T) {
 	key := keyOptions{alg: AlgorithmEC256}
 	pub, err := ykGenerateKey(tx, slot, key)
 	if err != nil {
-		t.Errorf("generating key: %v", err)
+		t.Fatalf("generating key: %v", err)
 	}
 
 	cliTmpl := &x509.Certificate{
