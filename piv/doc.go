@@ -12,5 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package piv implements management functionality for the Yubikey PIV applet.
+// Package piv implements management functionality for the YubiKey PIV applet.
 package piv

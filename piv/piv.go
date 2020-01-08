@@ -43,8 +43,8 @@ var (
 	// key required for slot actions such as generating keys, setting certificates,
 	// and signing.
 	//
-	// Yubikey's PIV tools can optionally derive the Management Key from the PIN,
-	// storing a salt on the Yubikey. This functionality is currently unsupported
+	// YubiKey's PIV tools can optionally derive the Management Key from the PIN,
+	// storing a salt on the YubiKey. This functionality is currently unsupported
 	// by this package.
 	DefaultManagementKey = [24]byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -53,25 +53,25 @@ var (
 	}
 )
 
-// ErrWrongPIN is the error returned when a login attempt fails because of an
+// errWrongPIN is the error returned when a login attempt fails because of an
 // invalid PIN or PUK.
 //
 // Use errors.As when checking for this error return.
 //
 //		err := yk.Login(badPIN)
 //		if err != nil {
-//			var e *ykpiv.ErrWrongPIN
+//			var e *yk.errWrongPIN
 //			if errors.As(err, &e) {
 //				// ...
 //			}
 //		}
 //
-type ErrWrongPIN struct {
+type errWrongPIN struct {
 	Retries int
 }
 
 // Error reports the number of retries left for a PIN or PUK.
-func (e *ErrWrongPIN) Error() string {
+func (e *errWrongPIN) Error() string {
 	s := "retries"
 	if e.Retries == 1 {
 		s = "retry"
@@ -92,18 +92,24 @@ func ykTransmit(tx *scTx, cmd apdu) ([]byte, error) {
 	}
 	// "Authentication method blocked"
 	if e.sw1 == 0x69 && e.sw2 == 0x83 {
-		return nil, &ErrWrongPIN{0}
+		return nil, &errWrongPIN{0}
 	}
 
 	// Verify fail status codes 0xc[0-f] communicate the number of retries.
 	if e.sw1 == 0x63 && (e.sw2&0xf0 == 0xc0) {
-		return nil, &ErrWrongPIN{int(e.sw2 ^ 0xc0)}
+		return nil, &errWrongPIN{int(e.sw2 ^ 0xc0)}
 	}
 	return nil, err
 }
 
-// SmartCards lists all available smart cards.
-func SmartCards() ([]string, error) {
+// Cards lists all smart cards available via PC/SC interface. Card names are
+// strings describing the key, such as "Yubico Yubikey NEO OTP+U2F+CCID 00 00".
+//
+// Card names depend on the operating system and what port a card is plugged
+// into. To uniquely identify a card, use its serial number.
+//
+// See: https://ludovicrousseau.blogspot.com/2010/05/what-is-in-pcsc-reader-name.html
+func Cards() ([]string, error) {
 	ctx, err := newSCContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pscs: %v", err)
@@ -149,17 +155,21 @@ const (
 	insGetSerial     = 0xf8
 )
 
-// Yubikey is an open connection to a Yubikey smart card.
-type Yubikey struct {
+// YubiKey is an open connection to a YubiKey smart card.
+type YubiKey struct {
 	ctx *scContext
 	h   *scHandle
 
 	// Used to determine how to access certain functionality.
+	//
+	// TODO: It's not clear what this actually communicates. Is this the
+	// YubiKey's version or PIV version? A NEO reports v1.0.4. Figure this out
+	// before exposing an API.
 	version *version
 }
 
 // Close releases the connection to the smart card.
-func (yk *Yubikey) Close() error {
+func (yk *YubiKey) Close() error {
 	err1 := yk.h.Close()
 	err2 := yk.ctx.Close()
 	if err1 == nil {
@@ -168,7 +178,8 @@ func (yk *Yubikey) Close() error {
 	return err1
 }
 
-func newYubikey(card string) (*Yubikey, error) {
+// Open connects to a YubiKey smart card.
+func Open(card string) (*YubiKey, error) {
 	ctx, err := newSCContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %v", err)
@@ -180,7 +191,7 @@ func newYubikey(card string) (*Yubikey, error) {
 		return nil, fmt.Errorf("connecting to smart card: %v", err)
 	}
 
-	yk := &Yubikey{ctx: ctx, h: h}
+	yk := &YubiKey{ctx: ctx, h: h}
 	tx, err := yk.begin()
 	if err != nil {
 		yk.Close()
@@ -195,7 +206,7 @@ func newYubikey(card string) (*Yubikey, error) {
 	return yk, nil
 }
 
-func (yk *Yubikey) begin() (*scTx, error) {
+func (yk *YubiKey) begin() (*scTx, error) {
 	tx, err := yk.h.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("beginning smart card transaction: %v", err)
@@ -207,8 +218,8 @@ func (yk *Yubikey) begin() (*scTx, error) {
 	return tx, nil
 }
 
-// Serial returns the Yubikey's serial number.
-func (yk *Yubikey) Serial() (uint32, error) {
+// Serial returns the YubiKey's serial number.
+func (yk *YubiKey) Serial() (uint32, error) {
 	tx, err := yk.begin()
 	if err != nil {
 		return 0, err
@@ -232,7 +243,7 @@ func encodePIN(pin string) ([]byte, error) {
 	return data, nil
 }
 
-func (yk *Yubikey) Login(pin string) error {
+func (yk *YubiKey) Login(pin string) error {
 	tx, err := yk.begin()
 	if err != nil {
 		return err
@@ -255,7 +266,7 @@ func ykLogin(tx *scTx, pin string) error {
 }
 
 // PINRetries returns the number of attempts remaining to enter the correct PIN.
-func (yk *Yubikey) PINRetries() (int, error) {
+func (yk *YubiKey) PINRetries() (int, error) {
 	tx, err := yk.begin()
 	if err != nil {
 		return 0, err
@@ -270,17 +281,17 @@ func ykPINRetries(tx *scTx) (int, error) {
 	if err == nil {
 		return 0, fmt.Errorf("expected error code from empty pin")
 	}
-	var e *ErrWrongPIN
+	var e *errWrongPIN
 	if errors.As(err, &e) {
 		return e.Retries, nil
 	}
 	return 0, fmt.Errorf("invalid response: %v", err)
 }
 
-// Reset resets the Yubikey PIV applet to its factory settings, wiping all slots
+// Reset resets the YubiKey PIV applet to its factory settings, wiping all slots
 // and resetting the PIN, PUK, and Management Key to their default values. This
 // does NOT affect data on other applets, such as GPG or U2F.
-func (yk *Yubikey) Reset() error {
+func (yk *YubiKey) Reset() error {
 	tx, err := yk.begin()
 	if err != nil {
 		return err
@@ -312,7 +323,7 @@ func ykReset(tx *scTx) error {
 			// TODO: do we care about a 1/100million chance?
 			return fmt.Errorf("expected error with random pin")
 		}
-		var e *ErrWrongPIN
+		var e *errWrongPIN
 		if !errors.As(err, &e) {
 			return fmt.Errorf("blocking pin: %v", err)
 		}
@@ -327,7 +338,7 @@ func ykReset(tx *scTx) error {
 			// TODO: do we care about a 1/100million chance?
 			return fmt.Errorf("expected error with random puk")
 		}
-		var e *ErrWrongPIN
+		var e *errWrongPIN
 		if !errors.As(err, &e) {
 			return fmt.Errorf("blocking puk: %v", err)
 		}
@@ -350,7 +361,7 @@ type version struct {
 }
 
 var (
-	// Smartcard Application IDs for Yubikeys.
+	// Smartcard Application IDs for YubiKeys.
 	//
 	// https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-1.7.0/lib/ykpiv.c#L1877
 	// https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-1.7.0/lib/ykpiv.c#L108-L110
@@ -358,7 +369,7 @@ var (
 
 	aidManagement = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17}
 	aidPIV        = [...]byte{0xa0, 0x00, 0x00, 0x03, 0x08}
-	aidYubikey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
+	aidYubiKey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
 )
 
 func ykAuthenticate(tx *scTx, key [24]byte) error {
@@ -553,9 +564,9 @@ func ykVersion(tx *scTx) (*version, error) {
 func ykSerial(tx *scTx, v *version) (uint32, error) {
 	cmd := apdu{instruction: insGetSerial}
 	if v.major < 5 {
-		// Earlier versions of Yubikeys required using the yubikey applet to get
+		// Earlier versions of YubiKeys required using the yubikey applet to get
 		// the serial number. Newer ones have this built into the PIV applet.
-		if err := ykSelectApplication(tx, aidYubikey[:]); err != nil {
+		if err := ykSelectApplication(tx, aidYubiKey[:]); err != nil {
 			return 0, fmt.Errorf("selecting yubikey applet: %v", err)
 		}
 		defer ykSelectApplication(tx, aidPIV[:])

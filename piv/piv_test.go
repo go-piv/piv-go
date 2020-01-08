@@ -24,10 +24,10 @@ import (
 	"testing"
 )
 
-var canModifyYubikey bool
+var canModifyYubiKey bool
 
 func init() {
-	flag.BoolVar(&canModifyYubikey, "wipe-yubikey", false,
+	flag.BoolVar(&canModifyYubiKey, "wipe-yubikey", false,
 		"Flag required to run tests that access the yubikey")
 }
 
@@ -53,7 +53,7 @@ func TestSmartCards(t *testing.T) {
 	}
 }
 
-func newTestYubikey(t *testing.T) (*Yubikey, func()) {
+func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 	cards, err := SmartCards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
@@ -62,10 +62,10 @@ func newTestYubikey(t *testing.T) (*Yubikey, func()) {
 		if !strings.Contains(strings.ToLower(card), "yubikey") {
 			continue
 		}
-		if !canModifyYubikey {
+		if !canModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
-		yk, err := newYubikey(card)
+		yk, err := Open(card)
 		if err != nil {
 			t.Fatalf("getting new yubikey: %v", err)
 		}
@@ -79,13 +79,13 @@ func newTestYubikey(t *testing.T) (*Yubikey, func()) {
 	return nil, nil
 }
 
-func TestNewYubikey(t *testing.T) {
-	_, close := newTestYubikey(t)
+func TestNewYubiKey(t *testing.T) {
+	_, close := newTestYubiKey(t)
 	defer close()
 }
 
-func TestYubikeySerial(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeySerial(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	if _, err := yk.Serial(); err != nil {
@@ -93,8 +93,8 @@ func TestYubikeySerial(t *testing.T) {
 	}
 }
 
-func TestYubikeyPINRetries(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyPINRetries(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 	tx, err := yk.begin()
 	if err != nil {
@@ -111,11 +111,11 @@ func TestYubikeyPINRetries(t *testing.T) {
 	}
 }
 
-func TestYubikeyReset(t *testing.T) {
+func TestYubiKeyReset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
-	yk, close := newTestYubikey(t)
+	yk, close := newTestYubiKey(t)
 	defer close()
 	tx, err := yk.begin()
 	if err != nil {
@@ -137,8 +137,8 @@ func TestYubikeyReset(t *testing.T) {
 	}
 }
 
-func TestYubikeyLogin(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyLogin(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	if err := yk.Login(DefaultPIN); err != nil {
@@ -146,8 +146,8 @@ func TestYubikeyLogin(t *testing.T) {
 	}
 }
 
-func TestYubikeyAuthenticate(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyAuthenticate(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	tx, err := yk.begin()
@@ -161,8 +161,8 @@ func TestYubikeyAuthenticate(t *testing.T) {
 	}
 }
 
-func TestYubikeySetManagementKey(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeySetManagementKey(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	var mgmtKey [24]byte
@@ -195,8 +195,8 @@ func TestYubikeySetManagementKey(t *testing.T) {
 	}
 }
 
-func TestYubikeyUnblockPIN(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyUnblockPIN(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	tx, err := yk.begin()
@@ -211,7 +211,7 @@ func TestYubikeyUnblockPIN(t *testing.T) {
 		if err == nil {
 			t.Fatalf("login with bad pin succeeded")
 		}
-		var e *ErrWrongPIN
+		var e *errWrongPIN
 		if !errors.As(err, &e) {
 			t.Fatalf("error returned was not a wrong pin error: %v", err)
 		}
@@ -228,8 +228,8 @@ func TestYubikeyUnblockPIN(t *testing.T) {
 	}
 }
 
-func TestYubikeyChangePIN(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyChangePIN(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	newPIN := "654321"
@@ -255,8 +255,8 @@ func TestYubikeyChangePIN(t *testing.T) {
 	}
 }
 
-func TestYubikeyChangePUK(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyChangePUK(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	newPUK := "87654321"
@@ -280,7 +280,7 @@ func TestYubikeyChangePUK(t *testing.T) {
 }
 
 func TestChangeManagementKey(t *testing.T) {
-	yk, close := newTestYubikey(t)
+	yk, close := newTestYubiKey(t)
 	defer close()
 
 	var newKey [24]byte

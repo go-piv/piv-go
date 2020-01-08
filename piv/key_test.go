@@ -30,8 +30,8 @@ import (
 	"time"
 )
 
-func TestYubikeySignECDSA(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeySignECDSA(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 	tx, err := yk.begin()
 	if err != nil {
@@ -43,6 +43,9 @@ func TestYubikeySignECDSA(t *testing.T) {
 
 	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
 		t.Fatalf("authenticating: %v", err)
+	}
+	if err := ykLogin(tx, DefaultPIN); err != nil {
+		t.Fatalf("logging in: %v", err)
 	}
 	key := keyOptions{alg: AlgorithmEC256}
 	pubKey, err := ykGenerateKey(tx, slot, key)
@@ -70,7 +73,7 @@ func TestYubikeySignECDSA(t *testing.T) {
 	}
 }
 
-func TestYubikeySignRSA(t *testing.T) {
+func TestYubiKeySignRSA(t *testing.T) {
 	tests := []struct {
 		name string
 		alg  Algorithm
@@ -84,7 +87,7 @@ func TestYubikeySignRSA(t *testing.T) {
 			if test.long && testing.Short() {
 				t.Skip("skipping test in short mode")
 			}
-			yk, close := newTestYubikey(t)
+			yk, close := newTestYubiKey(t)
 			defer close()
 			tx, err := yk.begin()
 			if err != nil {
@@ -96,6 +99,9 @@ func TestYubikeySignRSA(t *testing.T) {
 
 			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
 				t.Fatalf("authenticating: %v", err)
+			}
+			if err := ykLogin(tx, DefaultPIN); err != nil {
+				t.Fatalf("logging in: %v", err)
 			}
 			key := keyOptions{alg: AlgorithmRSA1024}
 			pubKey, err := ykGenerateKey(tx, slot, key)
@@ -119,7 +125,7 @@ func TestYubikeySignRSA(t *testing.T) {
 	}
 }
 
-func TestYubikeyDecryptRSA(t *testing.T) {
+func TestYubiKeyDecryptRSA(t *testing.T) {
 	tests := []struct {
 		name string
 		alg  Algorithm
@@ -133,7 +139,7 @@ func TestYubikeyDecryptRSA(t *testing.T) {
 			if test.long && testing.Short() {
 				t.Skip("skipping test in short mode")
 			}
-			yk, close := newTestYubikey(t)
+			yk, close := newTestYubiKey(t)
 			defer close()
 			tx, err := yk.begin()
 			if err != nil {
@@ -173,8 +179,8 @@ func TestYubikeyDecryptRSA(t *testing.T) {
 	}
 }
 
-func TestYubikeyStoreCertificate(t *testing.T) {
-	yk, close := newTestYubikey(t)
+func TestYubiKeyStoreCertificate(t *testing.T) {
+	yk, close := newTestYubiKey(t)
 	defer close()
 	tx, err := yk.begin()
 	if err != nil {
@@ -246,7 +252,7 @@ func TestYubikeyStoreCertificate(t *testing.T) {
 	}
 }
 
-func TestYubikeyGenerateKey(t *testing.T) {
+func TestYubiKeyGenerateKey(t *testing.T) {
 	tests := []struct {
 		name string
 		alg  Algorithm
@@ -276,7 +282,7 @@ func TestYubikeyGenerateKey(t *testing.T) {
 			if test.long && testing.Short() {
 				t.Skip("skipping test in short mode")
 			}
-			yk, close := newTestYubikey(t)
+			yk, close := newTestYubiKey(t)
 			defer close()
 			tx, err := yk.begin()
 			if err != nil {
