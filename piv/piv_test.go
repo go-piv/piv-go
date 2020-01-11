@@ -65,7 +65,7 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 		if !canModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
-		yk, err := Open(card)
+		yk, err := Open(card, CardOptions{})
 		if err != nil {
 			t.Fatalf("getting new yubikey: %v", err)
 		}
@@ -121,7 +121,7 @@ func TestYubiKeyReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	err = ykReset(tx)
+	err = ykReset(tx, rand.Reader)
 	tx.Close()
 	if err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
@@ -156,7 +156,7 @@ func TestYubiKeyAuthenticate(t *testing.T) {
 	}
 	defer tx.Close()
 
-	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 		t.Errorf("authenticating: %v", err)
 	}
 }
@@ -180,14 +180,14 @@ func TestYubiKeySetManagementKey(t *testing.T) {
 		t.Errorf("set management key without authenticating, expected error")
 	}
 
-	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 		t.Errorf("authenticating: %v", err)
 	}
 
 	if err := ykSetManagementKey(tx, mgmtKey, false); err != nil {
 		t.Fatalf("setting management key: %v", err)
 	}
-	if err := ykAuthenticate(tx, mgmtKey); err != nil {
+	if err := ykAuthenticate(tx, mgmtKey, rand.Reader); err != nil {
 		t.Errorf("authenticating with new management key: %v", err)
 	}
 	if err := ykSetManagementKey(tx, DefaultManagementKey, false); err != nil {
@@ -300,13 +300,13 @@ func TestChangeManagementKey(t *testing.T) {
 	}
 	defer tx.Close()
 
-	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 		t.Fatalf("authenticating with default management key: %v", err)
 	}
 	if err := ykChangeManagementKey(tx, newKey); err != nil {
 		t.Fatalf("changing management key: %v", err)
 	}
-	if err := ykAuthenticate(tx, newKey); err != nil {
+	if err := ykAuthenticate(tx, newKey, rand.Reader); err != nil {
 		t.Errorf("failed to authenticate with new management key: %v", err)
 	}
 	if err := ykChangeManagementKey(tx, DefaultManagementKey); err != nil {
