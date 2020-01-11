@@ -80,9 +80,17 @@ func (c *scContext) Close() error {
 func (c *scContext) ListReaders() ([]string, error) {
 	var n C.DWORD
 	rc := C.SCardListReaders(c.ctx, nil, nil, &n)
+	// The PC/SC daemon will return an error when no smart cards are available.
+	// Detect this and return nil with no smart cards instead.
+	const noReadersAvailable = 0x8010002E
+	if rc == noReadersAvailable {
+		return nil, nil
+	}
+
 	if err := scCheck(rc); err != nil {
 		return nil, err
 	}
+
 	d := make([]byte, n)
 	rc = C.SCardListReaders(c.ctx, nil, (*C.char)(unsafe.Pointer(&d[0])), &n)
 	if err := scCheck(rc); err != nil {
