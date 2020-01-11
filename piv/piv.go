@@ -25,7 +25,7 @@ import (
 	"math/big"
 )
 
-const (
+var (
 	// DefaultPIN for the PIV applet. The PIN is used to change the Management Key,
 	// and slots can optionally require it to perform signing operations.
 	//
@@ -36,9 +36,6 @@ const (
 	//
 	// For compatibility, the PUK should be 1-8 numeric characters.
 	DefaultPUK = "12345678"
-)
-
-var (
 	// DefaultManagementKey for the PIV applet. The Management Key is a Triple-DES
 	// key required for slot actions such as generating keys, setting certificates,
 	// and signing.
