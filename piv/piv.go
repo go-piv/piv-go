@@ -160,6 +160,8 @@ type YubiKey struct {
 	ctx *scContext
 	h   *scHandle
 
+	rand io.Reader
+
 	// Used to determine how to access certain functionality.
 	//
 	// TODO: It's not clear what this actually communicates. Is this the
@@ -178,8 +180,16 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
+// CardOptions holds configuration for interacting with the YubiKey.
+type CardOptions struct {
+	// Rand is a cryptographic source of randomness used for card challenges.
+	//
+	// If nil, defaults to crypto.Rand.
+	Rand io.Reader
+}
+
 // Open connects to a YubiKey smart card.
-func Open(card string) (*YubiKey, error) {
+func Open(card string, opts CardOptions) (*YubiKey, error) {
 	ctx, err := newSCContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %v", err)
@@ -203,6 +213,11 @@ func Open(card string) (*YubiKey, error) {
 		return nil, fmt.Errorf("getting yubikey version: %v", err)
 	}
 	yk.version = v
+	if opts.Rand != nil {
+		yk.rand = opts.Rand
+	} else {
+		yk.rand = rand.Reader
+	}
 	return yk, nil
 }
 
@@ -305,19 +320,19 @@ func (yk *YubiKey) Reset() error {
 		return err
 	}
 	defer tx.Close()
-	return ykReset(tx)
+	return ykReset(tx, yk.rand)
 }
 
-func ykReset(tx *scTx) error {
+func ykReset(tx *scTx, r io.Reader) error {
 	// Reset only works if both the PIN and PUK are blocked. Before resetting,
 	// try the wrong PIN and PUK multiple times to block them.
 
 	maxPIN := big.NewInt(100_000_000)
-	pinInt, err := rand.Int(rand.Reader, maxPIN)
+	pinInt, err := rand.Int(r, maxPIN)
 	if err != nil {
 		return fmt.Errorf("generating random pin: %v", err)
 	}
-	pukInt, err := rand.Int(rand.Reader, maxPIN)
+	pukInt, err := rand.Int(r, maxPIN)
 	if err != nil {
 		return fmt.Errorf("generating random puk: %v", err)
 	}
@@ -379,7 +394,7 @@ func (yk *YubiKey) AuthManagementKey(key [24]byte) error {
 		return err
 	}
 	defer tx.Close()
-	return ykAuthenticate(tx, key)
+	return ykAuthenticate(tx, key, yk.rand)
 }
 
 var (
@@ -394,7 +409,7 @@ var (
 	aidYubiKey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
 )
 
-func ykAuthenticate(tx *scTx, key [24]byte) error {
+func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=92
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
 
@@ -436,7 +451,7 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 	block.Decrypt(cardResponse, cardChallenge)
 
 	challenge := make([]byte, 8)
-	if _, err := io.ReadFull(rand.Reader, challenge); err != nil {
+	if _, err := io.ReadFull(rand, challenge); err != nil {
 		return fmt.Errorf("reading rand data: %v", err)
 	}
 	response := make([]byte, 8)
@@ -490,7 +505,7 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
 	}
 	defer tx.Close()
 
-	if err := ykAuthenticate(tx, oldKey); err != nil {
+	if err := ykAuthenticate(tx, oldKey, yk.rand); err != nil {
 		return fmt.Errorf("authenticating with old key: %v", err)
 	}
 	if err := ykSetManagementKey(tx, newKey, false); err != nil {

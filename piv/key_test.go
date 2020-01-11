@@ -41,7 +41,7 @@ func TestYubiKeySignECDSA(t *testing.T) {
 
 	slot := SlotAuthentication
 
-	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 		t.Fatalf("authenticating: %v", err)
 	}
 	if err := ykLogin(tx, DefaultPIN); err != nil {
@@ -101,7 +101,7 @@ func TestYubiKeySignRSA(t *testing.T) {
 
 			slot := SlotAuthentication
 
-			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 				t.Fatalf("authenticating: %v", err)
 			}
 			if err := ykLogin(tx, DefaultPIN); err != nil {
@@ -157,7 +157,7 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 
 			slot := SlotAuthentication
 
-			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 				t.Fatalf("authenticating: %v", err)
 			}
 			key := KeyOptions{
@@ -227,7 +227,7 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 		t.Fatalf("parsing ca cert: %v", err)
 	}
 
-	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 		t.Fatalf("authenticating: %v", err)
 	}
 	key := KeyOptions{
@@ -306,7 +306,7 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 			}
 			defer tx.Close()
 
-			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
+			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 				t.Fatalf("authenticating: %v", err)
 			}
 
