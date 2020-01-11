@@ -26,3 +26,9 @@ func scCheck(rc C.int) error {
 	}
 	return &scErr{pcscRC(rc)}
 }
+
+func isRCNoReaders(rc C.int) bool {
+	// MacOS does the right thing and doesn't return an error if no smart cards
+	// are available.
+	return false
+}

@@ -80,10 +80,11 @@ func (c *scContext) Close() error {
 func (c *scContext) ListReaders() ([]string, error) {
 	var n C.DWORD
 	rc := C.SCardListReaders(c.ctx, nil, nil, &n)
-	// The PC/SC daemon will return an error when no smart cards are available.
-	// Detect this and return nil with no smart cards instead.
-	const noReadersAvailable = 0x8010002E
-	if rc == noReadersAvailable {
+	// On Linux, the PC/SC daemon will return an error when no smart cards are
+	// available. Detect this and return nil with no smart cards instead.
+	//
+	// isRCNoReaders is defined in OS specific packages.
+	if isRCNoReaders(rc) {
 		return nil, nil
 	}
 
