@@ -243,7 +243,15 @@ func encodePIN(pin string) ([]byte, error) {
 	return data, nil
 }
 
-func (yk *YubiKey) Login(pin string) error {
+// AuthPIN attempts to authenticate against the card with the provided PIN.
+// The PIN is required to use and modify certain slots.
+//
+// After a specific number of authentication attemps with an invalid PIN,
+// usually 3, the PIN will become block and refuse further attempts. At that
+// point the PUK must be used to unblock the PIN.
+//
+// Use DefaultPIN if the PIN hasn't been set.
+func (yk *YubiKey) AuthPIN(pin string) error {
 	tx, err := yk.begin()
 	if err != nil {
 		return err
@@ -265,8 +273,8 @@ func ykLogin(tx *scTx, pin string) error {
 	return nil
 }
 
-// PINRetries returns the number of attempts remaining to enter the correct PIN.
-func (yk *YubiKey) PINRetries() (int, error) {
+// Retries returns the number of attempts remaining to enter the correct PIN.
+func (yk *YubiKey) Retries() (int, error) {
 	tx, err := yk.begin()
 	if err != nil {
 		return 0, err
@@ -358,6 +366,20 @@ type version struct {
 	major byte
 	minor byte
 	patch byte
+}
+
+// AuthManagementKey attempts to authenticate against the card with the provided
+// management key. The management key is required to generate new keys or add
+// certificates to slots.
+//
+// Use DefaultManagementKey if the management key hasn't been set.
+func (yk *YubiKey) AuthManagementKey(key [24]byte) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykAuthenticate(tx, key)
 }
 
 var (
@@ -461,6 +483,22 @@ func ykAuthenticate(tx *scTx, key [24]byte) error {
 	return nil
 }
 
+func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+
+	if err := ykAuthenticate(tx, oldKey); err != nil {
+		return fmt.Errorf("authenticating with old key: %v", err)
+	}
+	if err := ykSetManagementKey(tx, newKey, false); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ykSetManagementKey updates the management key to a new key. This requires
 // authenticating with the existing management key.
 func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
@@ -481,6 +519,15 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 	return nil
 }
 
+func (yk *YubiKey) SetPIN(oldPIN, newPIN string) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykChangePIN(tx, oldPIN, newPIN)
+}
+
 func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
 	oldPINData, err := encodePIN(oldPIN)
 	if err != nil {
@@ -499,6 +546,16 @@ func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
 	return err
 }
 
+// Unblock unblocks the PIN, setting it to a new value.
+func (yk *YubiKey) Unblock(puk, newPIN string) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykUnblockPIN(tx, puk, newPIN)
+}
+
 func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 	pukData, err := encodePIN(puk)
 	if err != nil {
@@ -515,6 +572,15 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 	}
 	_, err = ykTransmit(tx, cmd)
 	return err
+}
+
+func (yk *YubiKey) SetPUK(oldPUK, newPUK string) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykChangePUK(tx, oldPUK, newPUK)
 }
 
 func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {

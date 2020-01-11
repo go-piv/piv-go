@@ -2,6 +2,8 @@ This is not an officially supported Google product
 
 # A pure Go YubiKey PIV implementation
 
+[![GoDoc](https://godoc.org/github.com/ericchiang/piv-go/piv?status.svg)](https://godoc.org/github.com/ericchiang/piv-go/piv)
+
 YubiKeys implement the PIV specification for managing smart card certificates.
 This is a simpler alternative to GPG for managing asymmetric keys on a YubiKey,
 which can be used for use cases such as SSH, TLS, etc.

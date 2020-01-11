@@ -26,3 +26,7 @@ func scCheck(rc C.long) error {
 	}
 	return &scErr{pcscRC(rc)}
 }
+
+func isRCNoReaders(rc C.long) bool {
+	return rc == 0x8010002E
+}

@@ -47,7 +47,11 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	if err := ykLogin(tx, DefaultPIN); err != nil {
 		t.Fatalf("logging in: %v", err)
 	}
-	key := keyOptions{alg: AlgorithmEC256}
+	key := KeyOptions{
+		Algorithm:   AlgorithmEC256,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
 	pubKey, err := ykGenerateKey(tx, slot, key)
 	if err != nil {
 		t.Fatalf("generating key: %v", err)
@@ -103,7 +107,11 @@ func TestYubiKeySignRSA(t *testing.T) {
 			if err := ykLogin(tx, DefaultPIN); err != nil {
 				t.Fatalf("logging in: %v", err)
 			}
-			key := keyOptions{alg: AlgorithmRSA1024}
+			key := KeyOptions{
+				Algorithm:   test.alg,
+				TouchPolicy: TouchPolicyNever,
+				PINPolicy:   PINPolicyNever,
+			}
 			pubKey, err := ykGenerateKey(tx, slot, key)
 			if err != nil {
 				t.Fatalf("generating key: %v", err)
@@ -152,7 +160,11 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 			if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
 				t.Fatalf("authenticating: %v", err)
 			}
-			key := keyOptions{alg: AlgorithmRSA1024}
+			key := KeyOptions{
+				Algorithm:   test.alg,
+				TouchPolicy: TouchPolicyNever,
+				PINPolicy:   PINPolicyNever,
+			}
 			pubKey, err := ykGenerateKey(tx, slot, key)
 			if err != nil {
 				t.Fatalf("generating key: %v", err)
@@ -218,7 +230,11 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 	if err := ykAuthenticate(tx, DefaultManagementKey); err != nil {
 		t.Fatalf("authenticating: %v", err)
 	}
-	key := keyOptions{alg: AlgorithmEC256}
+	key := KeyOptions{
+		Algorithm:   AlgorithmEC256,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
 	pub, err := ykGenerateKey(tx, slot, key)
 	if err != nil {
 		t.Fatalf("generating key: %v", err)
@@ -294,7 +310,11 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 				t.Fatalf("authenticating: %v", err)
 			}
 
-			key := keyOptions{alg: test.alg}
+			key := KeyOptions{
+				Algorithm:   test.alg,
+				TouchPolicy: TouchPolicyNever,
+				PINPolicy:   PINPolicyNever,
+			}
 			if _, err := ykGenerateKey(tx, SlotAuthentication, key); err != nil {
 				t.Errorf("generating key: %v", err)
 			}

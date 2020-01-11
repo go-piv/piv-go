@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
+	"io"
 	"math/big"
 )
 
@@ -52,12 +53,12 @@ const (
 	AlgorithmRSA2048
 )
 
-type PinPolicy int
+type PINPolicy int
 
 const (
-	PinPolicyNever PinPolicy = iota
-	PinPolicyOnce
-	PinPolicyAlways
+	PINPolicyNever PINPolicy = iota
+	PINPolicyOnce
+	PINPolicyAlways
 )
 
 type TouchPolicy int
@@ -69,14 +70,14 @@ const (
 )
 
 const (
-	tagPinPolicy   = 0xaa
+	tagPINPolicy   = 0xaa
 	tagTouchPolicy = 0xab
 )
 
-var pinPolicyMap = map[PinPolicy]byte{
-	PinPolicyNever:  0x01,
-	PinPolicyOnce:   0x02,
-	PinPolicyAlways: 0x03,
+var pinPolicyMap = map[PINPolicy]byte{
+	PINPolicyNever:  0x01,
+	PINPolicyOnce:   0x02,
+	PINPolicyAlways: 0x03,
 }
 
 var touchPolicyMap = map[TouchPolicy]byte{
@@ -90,6 +91,15 @@ var algorithmsMap = map[Algorithm]byte{
 	AlgorithmEC384:   algECCP384,
 	AlgorithmRSA1024: algRSA1024,
 	AlgorithmRSA2048: algRSA2048,
+}
+
+func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
+	tx, err := yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	return ykGetCertificate(tx, slot)
 }
 
 func ykGetCertificate(tx *scTx, slot Slot) (*x509.Certificate, error) {
@@ -142,6 +152,15 @@ func marshalASN1(tag byte, data []byte) []byte {
 	return append(d, data...)
 }
 
+func (yk *YubiKey) SetCertificate(slot Slot, cert *x509.Certificate) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykStoreCertificate(tx, slot, cert)
+}
+
 func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=40
 	data := marshalASN1(0x70, cert.Raw)
@@ -169,23 +188,32 @@ func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
 	return nil
 }
 
-type keyOptions struct {
-	alg   Algorithm
-	pin   PinPolicy
-	touch TouchPolicy
+type KeyOptions struct {
+	Algorithm   Algorithm
+	PINPolicy   PINPolicy
+	TouchPolicy TouchPolicy
 }
 
-func ykGenerateKey(tx *scTx, slot Slot, o keyOptions) (crypto.PublicKey, error) {
-	alg, ok := algorithmsMap[o.alg]
+func (yk *YubiKey) GenerateKey(slot Slot, opts KeyOptions) (crypto.PublicKey, error) {
+	tx, err := yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	return ykGenerateKey(tx, slot, opts)
+}
+
+func ykGenerateKey(tx *scTx, slot Slot, o KeyOptions) (crypto.PublicKey, error) {
+	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
 		return nil, fmt.Errorf("unsupported algorithm")
 
 	}
-	tp, ok := touchPolicyMap[o.touch]
+	tp, ok := touchPolicyMap[o.TouchPolicy]
 	if !ok {
 		return nil, fmt.Errorf("unsupported touch policy")
 	}
-	pp, ok := pinPolicyMap[o.pin]
+	pp, ok := pinPolicyMap[o.PINPolicy]
 	if !ok {
 		return nil, fmt.Errorf("unsupported pin policy")
 	}
@@ -197,7 +225,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o keyOptions) (crypto.PublicKey, error) 
 			0xac,
 			0x09, // length of remaining data
 			algTag, 0x01, alg,
-			tagPinPolicy, 0x01, pp,
+			tagPINPolicy, 0x01, pp,
 			tagTouchPolicy, 0x01, tp,
 		},
 	}
@@ -207,7 +235,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o keyOptions) (crypto.PublicKey, error) 
 	}
 
 	var curve elliptic.Curve
-	switch o.alg {
+	switch o.Algorithm {
 	case AlgorithmRSA1024, AlgorithmRSA2048:
 		pub, err := decodeRSAPublic(resp)
 		if err != nil {
@@ -226,6 +254,64 @@ func ykGenerateKey(tx *scTx, slot Slot, o keyOptions) (crypto.PublicKey, error) 
 		return nil, fmt.Errorf("decoding ec public key: %v", err)
 	}
 	return pub, nil
+}
+
+func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey) (crypto.PrivateKey, error) {
+	switch pub := public.(type) {
+	case *ecdsa.PublicKey:
+		return &keyECDSA{yk, slot, pub}, nil
+	case *rsa.PublicKey:
+		return &keyRSA{yk, slot, pub}, nil
+	default:
+		return nil, fmt.Errorf("unsupported public key type: %T", public)
+	}
+}
+
+type keyECDSA struct {
+	yk   *YubiKey
+	slot Slot
+	pub  *ecdsa.PublicKey
+}
+
+func (k *keyECDSA) Public() crypto.PublicKey {
+	return k.pub
+}
+
+func (k *keyECDSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	tx, err := k.yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	return ykSignECDSA(tx, k.slot, k.pub, digest)
+}
+
+type keyRSA struct {
+	yk   *YubiKey
+	slot Slot
+	pub  *rsa.PublicKey
+}
+
+func (k *keyRSA) Public() crypto.PublicKey {
+	return k.pub
+}
+
+func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	tx, err := k.yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	return ykSignRSA(tx, k.slot, k.pub, digest, opts)
+}
+
+func (k *keyRSA) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
+	tx, err := k.yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	return ykDecryptRSA(tx, k.slot, k.pub, msg)
 }
 
 func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]byte, error) {
