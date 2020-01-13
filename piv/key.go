@@ -26,45 +26,58 @@ import (
 	"math/big"
 )
 
-// Slot is a private key and certificate pair managed by the security key.
-//
-// Slot IDs can be found at:
-// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=27
-//
-// Associated object IDs for X.509 certificates can be found at:
-// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=30
+// Slot is a private key and certificate combination managed by the security key.
 type Slot struct {
-	ID     uint32
+	// Key is a reference for a key type.
+	//
+	// See: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=32
+	Key uint32
+	// Object is a reference for data object.
+	//
+	// See: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=30
 	Object uint32
 }
 
+// Slot combinations pre-defined by this package.
 var (
 	SlotAuthentication     = Slot{0x9a, 0x5fc101}
 	SlotSignature          = Slot{0x9c, 0x5fc10a}
 	SlotCardAuthentication = Slot{0x9e, 0x5fc10b}
 )
 
+// Algorithm represents a specific algorithm and bit size supported by the PIV
+// specification.
 type Algorithm int
 
+// Algorithms supported by this package. Note that not all cards will support
+// every algorithm.
+//
+// For algorithm discovery, see: https://github.com/ericchiang/piv-go/issues/1
 const (
-	AlgorithmEC256 Algorithm = iota
+	AlgorithmEC256 Algorithm = iota + 1
 	AlgorithmEC384
 	AlgorithmRSA1024
 	AlgorithmRSA2048
 )
 
+// PINPolicy represents PIN requirements when signing or decrypting with an
+// asymmetric key in a given slot.
 type PINPolicy int
 
+// PIN policies supported by this package.
 const (
-	PINPolicyNever PINPolicy = iota
+	PINPolicyNever PINPolicy = iota + 1
 	PINPolicyOnce
 	PINPolicyAlways
 )
 
+// TouchPolicy represents proof-of-presence requirements when signing or
+// decrypting with asymmetric key in a given slot.
 type TouchPolicy int
 
+// Touch policies supported by this package.
 const (
-	TouchPolicyNever TouchPolicy = iota
+	TouchPolicyNever TouchPolicy = iota + 1
 	TouchPolicyCached
 	TouchPolicyAlways
 )
@@ -93,6 +106,7 @@ var algorithmsMap = map[Algorithm]byte{
 	AlgorithmRSA2048: algRSA2048,
 }
 
+// Certificate returns the certifiate object stored in a given slot.
 func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
 	tx, err := yk.begin()
 	if err != nil {
@@ -152,6 +166,9 @@ func marshalASN1(tag byte, data []byte) []byte {
 	return append(d, data...)
 }
 
+// SetCertificate stores a certificate object in the provided slot. Setting a
+// certificate isn't required to use the associated key for signing or
+// decryption.
 func (yk *YubiKey) SetCertificate(slot Slot, cert *x509.Certificate) error {
 	tx, err := yk.begin()
 	if err != nil {
@@ -188,12 +205,22 @@ func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
 	return nil
 }
 
+// KeyOptions is used for key generation and holds different options for the
+// key.
+//
+// While keys can have default PIN and touch policies, this package currently
+// doesn't support this option, and all fields must be provided.
 type KeyOptions struct {
-	Algorithm   Algorithm
-	PINPolicy   PINPolicy
+	// Algorithm to use when generating the key.
+	Algorithm Algorithm
+	// PINPolicy for the key.
+	PINPolicy PINPolicy
+	// TouchPolicy for the key.
 	TouchPolicy TouchPolicy
 }
 
+// GenerateKey generates an asymmetric key on the card, returning the key's
+// public key.
 func (yk *YubiKey) GenerateKey(slot Slot, opts KeyOptions) (crypto.PublicKey, error) {
 	tx, err := yk.begin()
 	if err != nil {
@@ -220,7 +247,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o KeyOptions) (crypto.PublicKey, error) 
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	cmd := apdu{
 		instruction: insGenerateAsymmetric,
-		param2:      byte(slot.ID),
+		param2:      byte(slot.Key),
 		data: []byte{
 			0xac,
 			0x09, // length of remaining data
@@ -256,6 +283,9 @@ func ykGenerateKey(tx *scTx, slot Slot, o KeyOptions) (crypto.PublicKey, error) 
 	return pub, nil
 }
 
+// PrivateKey is used to access signing and decryption options for the key
+// stored in the slot. The returned key implements crypto.Signer and/or
+// crypto.Decrypter depending on the key type.
 func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey) (crypto.PrivateKey, error) {
 	switch pub := public.(type) {
 	case *ecdsa.PublicKey:
@@ -337,7 +367,7 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 	cmd := apdu{
 		instruction: insAuthenticate,
 		param1:      alg,
-		param2:      byte(slot.ID),
+		param2:      byte(slot.Key),
 		data: marshalASN1(0x7c,
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, digest)...)),
@@ -441,7 +471,7 @@ func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte,
 	cmd := apdu{
 		instruction: insAuthenticate,
 		param1:      alg,
-		param2:      byte(slot.ID),
+		param2:      byte(slot.Key),
 		data: marshalASN1(0x7c,
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, data)...)),
@@ -514,7 +544,7 @@ func ykSignRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, digest []byte, opts cryp
 	cmd := apdu{
 		instruction: insAuthenticate,
 		param1:      alg,
-		param2:      byte(slot.ID),
+		param2:      byte(slot.Key),
 		data: marshalASN1(0x7c,
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, data)...)),

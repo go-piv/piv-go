@@ -28,21 +28,13 @@ import (
 var (
 	// DefaultPIN for the PIV applet. The PIN is used to change the Management Key,
 	// and slots can optionally require it to perform signing operations.
-	//
-	// For compatibility, the PIN should be 1-8 numeric characters.
 	DefaultPIN = "123456"
 	// DefaultPUK for the PIV applet. The PUK is only used to reset the PIN when
 	// the card's PIN retries have been exhausted.
-	//
-	// For compatibility, the PUK should be 1-8 numeric characters.
 	DefaultPUK = "12345678"
 	// DefaultManagementKey for the PIV applet. The Management Key is a Triple-DES
 	// key required for slot actions such as generating keys, setting certificates,
 	// and signing.
-	//
-	// YubiKey's PIV tools can optionally derive the Management Key from the PIN,
-	// storing a salt on the YubiKey. This functionality is currently unsupported
-	// by this package.
 	DefaultManagementKey = [24]byte{
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -495,6 +487,19 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 	return nil
 }
 
+// SetManagementKey updates the management key to a new key. Management keys
+// are triple-des keys, however padding isn't verified. To generate a new key,
+// generate 24 random bytes.
+//
+//		var newKey [24]byte
+//		if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
+//			// ...
+//		}
+//		if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey); err != nil {
+//			// ...
+//		}
+//
+//
 func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
 	tx, err := yk.begin()
 	if err != nil {
@@ -531,6 +536,22 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 	return nil
 }
 
+// SetPIN updates the PIN to a new value. For compatibility, PINs should be 1-8
+// numeric characters.
+//
+// To generate a new PIN, use the crypto/rand package.
+//
+//		// Generate a 6 character PIN.
+//		newPINInt, err := rand.Int(rand.Reader, bit.NewInt(1_000_000))
+//		if err != nil {
+//			// ...
+//		}
+//		// Format with leading zeros.
+//		newPIN := fmt.Sprintf("%06d", newPINInt)
+//		if err := yk.SetPIN(piv.DefaultPIN, newPIN); err != nil {
+//			// ...
+//		}
+//
 func (yk *YubiKey) SetPIN(oldPIN, newPIN string) error {
 	tx, err := yk.begin()
 	if err != nil {
@@ -586,6 +607,22 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 	return err
 }
 
+// SetPUK updates the PUK to a new value. For compatibility, PUKs should be 1-8
+// numeric characters.
+//
+// To generate a new PUK, use the crypto/rand package.
+//
+//		// Generate a 8 character PUK.
+//		newPUKInt, err := rand.Int(rand.Reader, bit.NewInt(100_000_000))
+//		if err != nil {
+//			// ...
+//		}
+//		// Format with leading zeros.
+//		newPUK := fmt.Sprintf("%08d", newPUKInt)
+//		if err := yk.SetPIN(piv.DefaultPUK, newPUK); err != nil {
+//			// ...
+//		}
+//
 func (yk *YubiKey) SetPUK(oldPUK, newPUK string) error {
 	tx, err := yk.begin()
 	if err != nil {
