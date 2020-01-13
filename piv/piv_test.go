@@ -65,7 +65,7 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 		if !canModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
-		yk, err := Open(card, CardOptions{})
+		yk, err := Open(card)
 		if err != nil {
 			t.Fatalf("getting new yubikey: %v", err)
 		}

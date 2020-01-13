@@ -205,12 +205,11 @@ func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
 	return nil
 }
 
-// KeyOptions is used for key generation and holds different options for the
-// key.
+// Key is used for key generation and holds different options for the key.
 //
 // While keys can have default PIN and touch policies, this package currently
 // doesn't support this option, and all fields must be provided.
-type KeyOptions struct {
+type Key struct {
 	// Algorithm to use when generating the key.
 	Algorithm Algorithm
 	// PINPolicy for the key.
@@ -221,7 +220,7 @@ type KeyOptions struct {
 
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
-func (yk *YubiKey) GenerateKey(slot Slot, opts KeyOptions) (crypto.PublicKey, error) {
+func (yk *YubiKey) GenerateKey(slot Slot, opts Key) (crypto.PublicKey, error) {
 	tx, err := yk.begin()
 	if err != nil {
 		return nil, err
@@ -230,7 +229,7 @@ func (yk *YubiKey) GenerateKey(slot Slot, opts KeyOptions) (crypto.PublicKey, er
 	return ykGenerateKey(tx, slot, opts)
 }
 
-func ykGenerateKey(tx *scTx, slot Slot, o KeyOptions) (crypto.PublicKey, error) {
+func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
 		return nil, fmt.Errorf("unsupported algorithm")

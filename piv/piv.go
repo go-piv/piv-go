@@ -99,12 +99,8 @@ func ykTransmit(tx *scTx, cmd apdu) ([]byte, error) {
 //
 // See: https://ludovicrousseau.blogspot.com/2010/05/what-is-in-pcsc-reader-name.html
 func Cards() ([]string, error) {
-	ctx, err := newSCContext()
-	if err != nil {
-		return nil, fmt.Errorf("connecting to pscs: %v", err)
-	}
-	defer ctx.Close()
-	return ctx.ListReaders()
+	var c client
+	return c.Cards()
 }
 
 const (
@@ -169,16 +165,31 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
-// CardOptions holds configuration for interacting with the YubiKey.
-type CardOptions struct {
+// Open connects to a YubiKey smart card.
+func Open(card string) (*YubiKey, error) {
+	var c client
+	return c.Open(card)
+}
+
+// client is a smart card client and may be exported in the future to allow
+// configuration for the top level Open() and Cards() APIs.
+type client struct {
 	// Rand is a cryptographic source of randomness used for card challenges.
 	//
 	// If nil, defaults to crypto.Rand.
 	Rand io.Reader
 }
 
-// Open connects to a YubiKey smart card.
-func Open(card string, opts CardOptions) (*YubiKey, error) {
+func (c *client) Cards() ([]string, error) {
+	ctx, err := newSCContext()
+	if err != nil {
+		return nil, fmt.Errorf("connecting to pscs: %v", err)
+	}
+	defer ctx.Close()
+	return ctx.ListReaders()
+}
+
+func (c *client) Open(card string) (*YubiKey, error) {
 	ctx, err := newSCContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %v", err)
@@ -202,8 +213,8 @@ func Open(card string, opts CardOptions) (*YubiKey, error) {
 		return nil, fmt.Errorf("getting yubikey version: %v", err)
 	}
 	yk.version = v
-	if opts.Rand != nil {
-		yk.rand = opts.Rand
+	if c.Rand != nil {
+		yk.rand = c.Rand
 	} else {
 		yk.rand = rand.Reader
 	}

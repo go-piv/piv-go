@@ -47,7 +47,7 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	if err := ykLogin(tx, DefaultPIN); err != nil {
 		t.Fatalf("logging in: %v", err)
 	}
-	key := KeyOptions{
+	key := Key{
 		Algorithm:   AlgorithmEC256,
 		TouchPolicy: TouchPolicyNever,
 		PINPolicy:   PINPolicyNever,
@@ -107,7 +107,7 @@ func TestYubiKeySignRSA(t *testing.T) {
 			if err := ykLogin(tx, DefaultPIN); err != nil {
 				t.Fatalf("logging in: %v", err)
 			}
-			key := KeyOptions{
+			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
 				PINPolicy:   PINPolicyNever,
@@ -160,7 +160,7 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 				t.Fatalf("authenticating: %v", err)
 			}
-			key := KeyOptions{
+			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
 				PINPolicy:   PINPolicyNever,
@@ -230,7 +230,7 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
 		t.Fatalf("authenticating: %v", err)
 	}
-	key := KeyOptions{
+	key := Key{
 		Algorithm:   AlgorithmEC256,
 		TouchPolicy: TouchPolicyNever,
 		PINPolicy:   PINPolicyNever,
@@ -310,7 +310,7 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 				t.Fatalf("authenticating: %v", err)
 			}
 
-			key := KeyOptions{
+			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
 				PINPolicy:   PINPolicyNever,
