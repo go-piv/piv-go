@@ -13,4 +13,6 @@
 // limitations under the License.
 
 // Package piv implements management functionality for the YubiKey PIV applet.
+//
+// WARNING: APIs in this package are experimental and subject to change.
 package piv
