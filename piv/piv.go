@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/des"
 	"crypto/rand"
+	"encoding/asn1"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -718,6 +719,222 @@ func ykChangeManagementKey(tx *scTx, key [24]byte) error {
 		data: append([]byte{
 			alg3DES, keyCardManagement, 24,
 		}, key[:]...),
+	}
+	if _, err := ykTransmit(tx, cmd); err != nil {
+		return fmt.Errorf("command failed: %v", err)
+	}
+	return nil
+}
+
+func unmarshalDERField(b []byte, tag uint64) (obj []byte, err error) {
+	var prefix []byte
+	for tag > 0 {
+		prefix = append(prefix, byte(tag))
+		tag = tag >> 8
+	}
+	for i, j := 0, len(prefix)-1; i < j; i, j = i+1, j-1 {
+		prefix[i], prefix[j] = prefix[j], prefix[i]
+	}
+
+	hasPrefix := bytes.HasPrefix(b, prefix)
+	for len(b) > 0 {
+		var v asn1.RawValue
+		b, err = asn1.Unmarshal(b, &v)
+		if err != nil {
+			return nil, err
+		}
+		if hasPrefix {
+			return v.Bytes, nil
+		}
+	}
+	return nil, fmt.Errorf("no der value with tag 0x%x", prefix)
+}
+
+// Metadata returns protected data stored on the card. This can be used to
+// retrieve PIN protected management keys.
+func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
+	tx, err := yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	m, err := ykGetProtectedMetadata(tx, pin)
+	if err != nil {
+		var e *apduErr
+		if !errors.As(err, &e) {
+			return nil, err
+		}
+		if e.sw1 == 0x6a && e.sw2 == 0x82 {
+			// Error code indicating the object wasn't found.
+			return &Metadata{}, nil
+		}
+		return nil, err
+	}
+	return m, nil
+}
+
+// SetMetadata sets PIN protected metadata on the key. This is primarily to
+// store the management key on the smart card instead of managing the PIN and
+// management key seperately.
+func (yk *YubiKey) SetMetadata(key [24]byte, m *Metadata) error {
+	tx, err := yk.begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Close()
+	return ykSetProtectedMetadata(tx, key, m)
+}
+
+// Metadata holds protected metadata. This is primarily used by YubiKey manager
+// to implement PIN protect management keys, storing management keys on the card
+// guarded by the PIN.
+type Metadata struct {
+	// ManagementKey is the management key stored directly on the YubiKey.
+	ManagementKey *[24]byte
+
+	// raw, if not nil, is the full bytes
+	raw []byte
+}
+
+func (m *Metadata) marshal() ([]byte, error) {
+	if m.raw == nil {
+		if m.ManagementKey == nil {
+			return []byte{0x88, 0x00}, nil
+		}
+		return append([]byte{
+			0x88,
+			26,
+			0x89,
+			24,
+		}, m.ManagementKey[:]...), nil
+	}
+
+	if m.ManagementKey == nil {
+		return m.raw, nil
+	}
+
+	var metadata asn1.RawValue
+	if _, err := asn1.Unmarshal(m.raw, &metadata); err != nil {
+		return nil, fmt.Errorf("updating metadata: %v", err)
+	}
+	if !bytes.HasPrefix(metadata.FullBytes, []byte{0x88}) {
+		return nil, fmt.Errorf("expected tag: 0x88")
+	}
+	raw := metadata.Bytes
+
+	metadata.Bytes = nil
+	metadata.FullBytes = nil
+
+	for len(raw) > 0 {
+		var (
+			err error
+			v   asn1.RawValue
+		)
+		raw, err = asn1.Unmarshal(raw, &v)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal metadata field: %v", err)
+		}
+
+		if bytes.HasPrefix(v.FullBytes, []byte{0x89}) {
+			continue
+		}
+		metadata.Bytes = append(metadata.Bytes, v.FullBytes...)
+	}
+	metadata.Bytes = append(metadata.Bytes, 0x89, 24)
+	metadata.Bytes = append(metadata.Bytes, m.ManagementKey[:]...)
+	return asn1.Marshal(metadata)
+}
+
+func (m *Metadata) unmarshal(b []byte) error {
+	m.raw = b
+	var md asn1.RawValue
+	if _, err := asn1.Unmarshal(b, &md); err != nil {
+		return err
+	}
+	if !bytes.HasPrefix(md.FullBytes, []byte{0x88}) {
+		return fmt.Errorf("expected tag: 0x88")
+	}
+	d := md.Bytes
+	for len(d) > 0 {
+		var (
+			err error
+			v   asn1.RawValue
+		)
+		d, err = asn1.Unmarshal(d, &v)
+		if err != nil {
+			return fmt.Errorf("unmarshal metadata field: %v", err)
+		}
+		if !bytes.HasPrefix(v.FullBytes, []byte{0x89}) {
+			continue
+		}
+		// 0x89 indicates key
+		if len(v.Bytes) != 24 {
+			return fmt.Errorf("invalid management key length: %d", len(v.Bytes))
+		}
+		var key [24]byte
+		for i := 0; i < len(v.Bytes); i++ {
+			key[i] = v.Bytes[i]
+		}
+		m.ManagementKey = &key
+	}
+	return nil
+}
+
+func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
+	// NOTE: for some reason this action requires the PIN to be authenticated on
+	// the same transaction. It doesn't work otherwise.
+	if err := ykLogin(tx, pin); err != nil {
+		return nil, fmt.Errorf("authenticating with pin: %v", err)
+	}
+	cmd := apdu{
+		instruction: insGetData,
+		param1:      0x3f,
+		param2:      0xff,
+		data: []byte{
+			0x5c, // Tag list
+			0x03,
+			0x5f,
+			0xc1,
+			0x09,
+		},
+	}
+	resp, err := ykTransmit(tx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
+	}
+	var m Metadata
+	if err := m.unmarshal(obj); err != nil {
+		return nil, fmt.Errorf("unmarshal protected metadata: %v", err)
+	}
+	return &m, nil
+}
+
+func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
+	data, err := m.marshal()
+	if err != nil {
+		return fmt.Errorf("encoding metadata: %v", err)
+	}
+	data = append([]byte{
+		0x5c, // Tag list
+		0x03,
+		0x5f,
+		0xc1,
+		0x09,
+	}, marshalASN1(0x53, data)...)
+	cmd := apdu{
+		instruction: insPutData,
+		param1:      0x3f,
+		param2:      0xff,
+		data:        data,
+	}
+	// NOTE: for some reason this action requires the management key authenticated
+	// on the same transaction. It doesn't work otherwise.
+	if err := ykAuthenticate(tx, key, rand.Reader); err != nil {
+		return fmt.Errorf("authenticating with key: %v", err)
 	}
 	if _, err := ykTransmit(tx, cmd); err != nil {
 		return fmt.Errorf("command failed: %v", err)
