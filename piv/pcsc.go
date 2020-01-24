@@ -45,7 +45,7 @@ func (e *scErr) Error() string {
 	if msg, ok := pcscErrMsgs[int64(e.rc)]; ok {
 		return msg
 	}
-	return fmt.Sprintf("unknown pcsc return code 0x%08x", e)
+	return fmt.Sprintf("unknown pcsc return code 0x%08x", e.rc)
 }
 
 type apduErr struct {
