@@ -15,10 +15,12 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
-	"strings"
 
 	"github.com/ericchiang/piv-go/piv"
 )
@@ -32,7 +34,7 @@ Subcommands:
 
     init  Initialize a key.
     list  List all available YubiKeys and which ones have been initialized.
-	reset Reset the PIV applet on a YubiKey.
+    reset Reset the PIV applet on a YubiKey.
     run   Run the agent and begin listening for requests on a socket.
 
 `)
@@ -42,6 +44,26 @@ func usageList(w io.Writer) {
 	fmt.Fprint(w, `Usage: piv-ssh-agent list
 
 List all available YubiKeys.
+`)
+}
+
+func usageReset(w io.Writer) {
+	fmt.Fprint(w, `Usage: piv-ssh-agent reset [flags] [serial number]
+
+Reset the YubiKey's PIV applet. This doesn't effect other applets cards, such
+as GPG and U2F/FIDO2 data.
+
+Flags:
+
+    --force  Reset the applet without prompting first.
+
+Example:
+
+    $ piv-ssh-agent list
+    Yubico YubiKey OTP+FIDO+CCID: 5d404d
+    $ piv-ssh-agent reset 5d404d
+    Reset PIV applet? [y/n]: y
+
 `)
 }
 
@@ -56,7 +78,9 @@ func main() {
 		usage(os.Stdout)
 		os.Exit(0)
 	case "list":
-		cmdList(os.Args[2:])
+		err = cmdList(os.Args[2:])
+	case "reset":
+		err = cmdReset(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unrecognized command: %s\n", os.Args[1])
 		os.Exit(1)
@@ -98,7 +122,7 @@ func cmdList(args []string) error {
 	}
 	gotErr := false
 	for _, card := range cards {
-		if !strings.Contains(strings.ToLower(card), "yubikey") {
+		if !isYubiKey(card) {
 			continue
 		}
 		yk, err := piv.Open(card)
@@ -113,13 +137,49 @@ func cmdList(args []string) error {
 			continue
 		}
 		if contains(managedCards, serial) {
-			fmt.Printf("%s: %x\n", card, serial)
+			fmt.Printf("%s: %08x\n", card, serial)
 		} else {
-			fmt.Printf("%s (uninitialized): %x\n", card, serial)
+			fmt.Printf("%s (uninitialized): %08x\n", card, serial)
 		}
 	}
 	if gotErr {
 		return fmt.Errorf("failed to query cards")
 	}
 	return nil
+}
+
+func newFlagSet() *flag.FlagSet {
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	fs.SetOutput(ioutil.Discard)
+	return fs
+}
+
+func cmdReset(args []string) error {
+	var force bool
+	fs := newFlagSet()
+	fs.BoolVar(&force, "force", false, "")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			usageReset(os.Stdout)
+			return nil
+		}
+		return fmt.Errorf("parsing flags: %v", err)
+	}
+	switch len(fs.Args()) {
+	case 0:
+		return fmt.Errorf("usage: piv-ssh-agent reset [flags] [serial number]")
+	case 1:
+	default:
+		return fmt.Errorf("invalid number of arguments")
+	}
+	s := fs.Args()[0]
+	serial, ok := parseSerial([]byte(s))
+	if !ok {
+		return fmt.Errorf("invalid serial number: %s", s)
+	}
+	r := resetter{out: os.Stderr}
+	if !force {
+		r.prompt = resetPrompt
+	}
+	return r.reset(serial)
 }
