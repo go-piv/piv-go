@@ -45,7 +45,7 @@ func TestListCreds(t *testing.T) {
 	a, cleanup := newTestAgent(t)
 	defer cleanup()
 
-	p := filepath.Join(a.dir, credsFilepath)
+	p := filepath.Join(a.dir, agentFilepathCreds)
 	if err := ioutil.WriteFile(p, []byte(`11112222 123456
 ffffaaaa 654321
 `), 0600); err != nil {
