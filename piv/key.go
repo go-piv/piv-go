@@ -169,12 +169,15 @@ func marshalASN1(tag byte, data []byte) []byte {
 // SetCertificate stores a certificate object in the provided slot. Setting a
 // certificate isn't required to use the associated key for signing or
 // decryption.
-func (yk *YubiKey) SetCertificate(slot Slot, cert *x509.Certificate) error {
+func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificate) error {
 	tx, err := yk.begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Close()
+	if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+		return fmt.Errorf("authenticating with management key: %v", err)
+	}
 	return ykStoreCertificate(tx, slot, cert)
 }
 
@@ -220,12 +223,15 @@ type Key struct {
 
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
-func (yk *YubiKey) GenerateKey(slot Slot, opts Key) (crypto.PublicKey, error) {
+func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
 	tx, err := yk.begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Close()
+	if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+		return nil, fmt.Errorf("authenticating with management key: %v", err)
+	}
 	return ykGenerateKey(tx, slot, opts)
 }
 
@@ -282,15 +288,63 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 	return pub, nil
 }
 
+// KeyAuth is used to authenticate against the YubiKey on each signing  and
+// decryption request.
+type KeyAuth struct {
+	// PIN, if provided, is a static PIN used to authenticate against the key.
+	// If provided, PINPrompt is ignored.
+	PIN string
+	// PINPrompt should be used to interactively request the PIN from the user.
+	PINPrompt func() (pin string, err error)
+
+	// TouchPrompt is used to prompt the user for a key touch.
+	TouchPrompt func() error
+}
+
+func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
+	tx, err = yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			tx.Close()
+		}
+	}()
+
+	// TODO(ericchiang): support cached pin and touch policies, possibly by
+	// attempting to sign, then prompting on specific apdu error codes.
+	if k.PIN != "" {
+		if err := ykLogin(tx, k.PIN); err != nil {
+			return nil, fmt.Errorf("authenticating with pin: %v", err)
+		}
+	} else if k.PINPrompt != nil {
+		pin, err := k.PINPrompt()
+		if err != nil {
+			return nil, fmt.Errorf("pin prompt: %v", err)
+		}
+		if err := ykLogin(tx, pin); err != nil {
+			return nil, fmt.Errorf("authenticating with pin: %v", err)
+		}
+	}
+
+	if k.TouchPrompt != nil {
+		if err := k.TouchPrompt(); err != nil {
+			return nil, fmt.Errorf("requesting touch: %v", err)
+		}
+	}
+	return tx, nil
+}
+
 // PrivateKey is used to access signing and decryption options for the key
 // stored in the slot. The returned key implements crypto.Signer and/or
 // crypto.Decrypter depending on the key type.
-func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey) (crypto.PrivateKey, error) {
+func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) (crypto.PrivateKey, error) {
 	switch pub := public.(type) {
 	case *ecdsa.PublicKey:
-		return &keyECDSA{yk, slot, pub}, nil
+		return &keyECDSA{yk, slot, pub, auth}, nil
 	case *rsa.PublicKey:
-		return &keyRSA{yk, slot, pub}, nil
+		return &keyRSA{yk, slot, pub, auth}, nil
 	default:
 		return nil, fmt.Errorf("unsupported public key type: %T", public)
 	}
@@ -300,6 +354,7 @@ type keyECDSA struct {
 	yk   *YubiKey
 	slot Slot
 	pub  *ecdsa.PublicKey
+	auth KeyAuth
 }
 
 func (k *keyECDSA) Public() crypto.PublicKey {
@@ -307,7 +362,7 @@ func (k *keyECDSA) Public() crypto.PublicKey {
 }
 
 func (k *keyECDSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	tx, err := k.yk.begin()
+	tx, err := k.auth.begin(k.yk)
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +374,7 @@ type keyRSA struct {
 	yk   *YubiKey
 	slot Slot
 	pub  *rsa.PublicKey
+	auth KeyAuth
 }
 
 func (k *keyRSA) Public() crypto.PublicKey {
@@ -326,7 +382,7 @@ func (k *keyRSA) Public() crypto.PublicKey {
 }
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	tx, err := k.yk.begin()
+	tx, err := k.auth.begin(k.yk)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +391,7 @@ func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]
 }
 
 func (k *keyRSA) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
-	tx, err := k.yk.begin()
+	tx, err := k.auth.begin(k.yk)
 	if err != nil {
 		return nil, err
 	}

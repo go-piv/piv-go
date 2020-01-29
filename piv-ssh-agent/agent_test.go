@@ -16,11 +16,16 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/ericchiang/piv-go/internal/pivtest"
+	"github.com/ericchiang/piv-go/piv"
 )
 
 func newTestAgent(t *testing.T) (*agent, func()) {
@@ -41,6 +46,83 @@ func newTestAgent(t *testing.T) (*agent, func()) {
 	return a, cleanup
 }
 
+func newTestYubiKeySerial(t *testing.T) uint32 {
+	yk, close := newTestYubiKey(t)
+	serial, err := yk.Serial()
+	close()
+	if err != nil {
+		t.Fatalf("getting serial number: %v", err)
+	}
+	return serial
+}
+
+func newTestYubiKey(t *testing.T) (*piv.YubiKey, func()) {
+	cards, err := piv.Cards()
+	if err != nil {
+		t.Fatalf("listing cards: %v", err)
+	}
+	for _, card := range cards {
+		if !strings.Contains(strings.ToLower(card), "yubikey") {
+			continue
+		}
+		if !pivtest.CanModifyYubiKey {
+			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
+		}
+		yk, err := piv.Open(card)
+		if err != nil {
+			t.Fatalf("getting new yubikey: %v", err)
+		}
+		return yk, func() {
+			if err := yk.Close(); err != nil {
+				t.Errorf("closing yubikey: %v", err)
+			}
+		}
+	}
+	t.Skip("no yubikeys detected, skipping")
+	return nil, nil
+}
+
+func TestGenerateCreds(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		pin, puk, key, err := generateCreds(rand.Reader)
+		if err != nil {
+			t.Fatalf("generating creds: %v", err)
+		}
+		if len(pin) != 6 {
+			t.Errorf("expected 6 digit pin, got %s", pin)
+		}
+		if len(puk) != 8 {
+			t.Errorf("expected 8 digit puk, got %s", puk)
+		}
+		if key == [24]byte{} {
+			// test will flake 1/2^(24*8) times run
+			t.Errorf("key wasn't initialized")
+		}
+	}
+}
+
+func TestCmdInit(t *testing.T) {
+	serial := newTestYubiKeySerial(t)
+	a, cleanup := newTestAgent(t)
+	defer cleanup()
+
+	if err := a.reset(true, serial); err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+	if err := a.initCard(serial); err != nil {
+		t.Fatalf("initializing card: %v", err)
+	}
+}
+
+func TestCmdReset(t *testing.T) {
+	serial := newTestYubiKeySerial(t)
+	a, cleanup := newTestAgent(t)
+	defer cleanup()
+	if err := a.reset(true, serial); err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+}
+
 func TestListCreds(t *testing.T) {
 	a, cleanup := newTestAgent(t)
 	defer cleanup()
@@ -55,7 +137,7 @@ ffffaaaa 654321
 	want := []uint32{
 		0x11112222, 0xffffaaaa,
 	}
-	got, err := a.listCards()
+	got, err := a.listManagedCards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
 	}
@@ -68,7 +150,7 @@ func TestListCredsEmpty(t *testing.T) {
 	a, cleanup := newTestAgent(t)
 	defer cleanup()
 
-	cards, err := a.listCards()
+	cards, err := a.listManagedCards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
 	}
