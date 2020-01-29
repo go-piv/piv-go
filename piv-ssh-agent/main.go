@@ -32,7 +32,7 @@ An SSH agent that stores SSH keys on a YubiKey.
 
 Subcommands:
 
-    init  Initialize a key.
+    init  Initialize a YubiKey.
     list  List all available YubiKeys and which ones have been initialized.
     reset Reset the PIV applet on a YubiKey.
     run   Run the agent and begin listening for requests on a socket.
@@ -60,9 +60,27 @@ Flags:
 Example:
 
     $ piv-ssh-agent list
-    Yubico YubiKey OTP+FIDO+CCID: 5d404d
-    $ piv-ssh-agent reset 5d404d
+    Yubico YubiKey OTP+FIDO+CCID: 005d404d
+    $ piv-ssh-agent reset 005d404d
     Reset PIV applet? [y/n]: y
+
+`)
+}
+
+func usageInit(w io.Writer) {
+	fmt.Fprint(w, `Usage: piv-ssh-agent init [flags] [serial number]
+
+Initialize a YubiKey with a random PIN, PUK, and Management Key, and generate
+an SSH key on the card.
+
+The YubiKey must not have been initialized or had its credentials changed. To
+wipe card with non-default values, use the "reset" subcommand.
+
+Example:
+
+    $ piv-ssh-agent list
+    Yubico YubiKey OTP+FIDO+CCID: 005d404d
+    $ piv-ssh-agent init 005d404d
 
 `)
 }
@@ -112,7 +130,7 @@ func cmdList(args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing agent: %v", err)
 	}
-	managedCards, err := a.listCards()
+	managedCards, err := a.listManagedCards()
 	if err != nil {
 		return fmt.Errorf("fetching cards managed by agent: %v", err)
 	}
@@ -177,9 +195,38 @@ func cmdReset(args []string) error {
 	if !ok {
 		return fmt.Errorf("invalid serial number: %s", s)
 	}
-	r := resetter{out: os.Stderr}
-	if !force {
-		r.prompt = resetPrompt
+	a, err := newAgent(config{})
+	if err != nil {
+		return fmt.Errorf("initializing agent: %v", err)
 	}
-	return r.reset(serial)
+	return a.reset(force, serial)
+}
+
+func cmdInit(args []string) error {
+	fs := newFlagSet()
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			usageInit(os.Stdout)
+			return nil
+		}
+		return fmt.Errorf("parsing flags: %v", err)
+	}
+	switch len(fs.Args()) {
+	case 0:
+		return fmt.Errorf("usage: piv-ssh-agent init [flags] [serial number]")
+	case 1:
+	default:
+		return fmt.Errorf("invalid number of arguments")
+	}
+
+	s := fs.Args()[0]
+	serial, ok := parseSerial([]byte(s))
+	if !ok {
+		return fmt.Errorf("invalid serial number: %s", s)
+	}
+	a, err := newAgent(config{})
+	if err != nil {
+		return fmt.Errorf("initializing agent: %v", err)
+	}
+	return a.initCard(serial)
 }

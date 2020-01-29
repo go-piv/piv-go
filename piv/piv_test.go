@@ -92,13 +92,7 @@ func TestYubiKeySerial(t *testing.T) {
 func TestYubiKeyPINRetries(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer tx.Close()
-
-	retries, err := ykPINRetries(tx)
+	retries, err := yk.Retries()
 	if err != nil {
 		t.Fatalf("getting retries: %v", err)
 	}
@@ -113,23 +107,11 @@ func TestYubiKeyReset(t *testing.T) {
 	}
 	yk, close := newTestYubiKey(t)
 	defer close()
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	err = ykReset(tx, rand.Reader)
-	tx.Close()
-	if err != nil {
+	if err := yk.Reset(); err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
 	}
-
-	tx, err = yk.begin()
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer tx.Close()
-	if err := ykLogin(tx, DefaultPIN); err != nil {
-		t.Errorf("login with default pin failed: %v", err)
+	if err := yk.AuthPIN(DefaultPIN); err != nil {
+		t.Fatalf("login: %v", err)
 	}
 }
 
@@ -146,13 +128,7 @@ func TestYubiKeyAuthenticate(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin transaction: %v", err)
-	}
-	defer tx.Close()
-
-	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
+	if err := yk.AuthManagementKey(DefaultManagementKey); err != nil {
 		t.Errorf("authenticating: %v", err)
 	}
 }
@@ -166,28 +142,14 @@ func TestYubiKeySetManagementKey(t *testing.T) {
 		t.Fatalf("generating management key: %v", err)
 	}
 
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin transaction: %v", err)
-	}
-	defer tx.Close()
-
-	if err := ykSetManagementKey(tx, mgmtKey, false); err == nil {
-		t.Errorf("set management key without authenticating, expected error")
-	}
-
-	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
-		t.Errorf("authenticating: %v", err)
-	}
-
-	if err := ykSetManagementKey(tx, mgmtKey, false); err != nil {
+	if err := yk.SetManagementKey(DefaultManagementKey, mgmtKey); err != nil {
 		t.Fatalf("setting management key: %v", err)
 	}
-	if err := ykAuthenticate(tx, mgmtKey, rand.Reader); err != nil {
+	if err := yk.AuthManagementKey(mgmtKey); err != nil {
 		t.Errorf("authenticating with new management key: %v", err)
 	}
-	if err := ykSetManagementKey(tx, DefaultManagementKey, false); err != nil {
-		t.Fatalf("setting management key: %v", err)
+	if err := yk.SetManagementKey(mgmtKey, DefaultManagementKey); err != nil {
+		t.Fatalf("resetting management key: %v", err)
 	}
 }
 

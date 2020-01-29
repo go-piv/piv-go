@@ -194,12 +194,6 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 func TestYubiKeyStoreCertificate(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer tx.Close()
-
 	slot := SlotAuthentication
 
 	caPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -227,15 +221,12 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 		t.Fatalf("parsing ca cert: %v", err)
 	}
 
-	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
-		t.Fatalf("authenticating: %v", err)
-	}
 	key := Key{
 		Algorithm:   AlgorithmEC256,
 		TouchPolicy: TouchPolicyNever,
 		PINPolicy:   PINPolicyNever,
 	}
-	pub, err := ykGenerateKey(tx, slot, key)
+	pub, err := yk.GenerateKey(DefaultManagementKey, slot, key)
 	if err != nil {
 		t.Fatalf("generating key: %v", err)
 	}
@@ -256,10 +247,10 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing cli cert: %v", err)
 	}
-	if err := ykStoreCertificate(tx, slot, cliCert); err != nil {
+	if err := yk.SetCertificate(DefaultManagementKey, slot, cliCert); err != nil {
 		t.Fatalf("storing client cert: %v", err)
 	}
-	gotCert, err := ykGetCertificate(tx, slot)
+	gotCert, err := yk.Certificate(slot)
 	if err != nil {
 		t.Fatalf("getting client cert: %v", err)
 	}
@@ -300,24 +291,63 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
-			tx, err := yk.begin()
-			if err != nil {
-				t.Fatalf("begin: %v", err)
-			}
-			defer tx.Close()
-
-			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
-				t.Fatalf("authenticating: %v", err)
-			}
-
 			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
 				PINPolicy:   PINPolicyNever,
 			}
-			if _, err := ykGenerateKey(tx, SlotAuthentication, key); err != nil {
+			if _, err := yk.GenerateKey(DefaultManagementKey, SlotAuthentication, key); err != nil {
 				t.Errorf("generating key: %v", err)
 			}
 		})
+	}
+}
+
+func TestYubiKeyPrivateKey(t *testing.T) {
+	alg := AlgorithmEC256
+	slot := SlotAuthentication
+
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	key := Key{
+		Algorithm:   alg,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pub, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an *ecdsa.PublicKey: %T", pub)
+	}
+
+	auth := KeyAuth{PIN: DefaultPIN}
+	priv, err := yk.PrivateKey(slot, pub, auth)
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	signer, ok := priv.(crypto.Signer)
+	if !ok {
+		t.Fatalf("private key doesn't implement crypto.Signer")
+	}
+
+	b := sha256.Sum256([]byte("hello"))
+	hash := b[:]
+	sig, err := signer.Sign(rand.Reader, hash, crypto.SHA256)
+	if err != nil {
+		t.Fatalf("signing failed: %v", err)
+	}
+
+	var ecdsaSignature struct {
+		R, S *big.Int
+	}
+	if _, err := asn1.Unmarshal(sig, &ecdsaSignature); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !ecdsa.Verify(ecdsaPub, hash, ecdsaSignature.R, ecdsaSignature.S) {
+		t.Fatalf("signature validation failed")
 	}
 }
