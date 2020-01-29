@@ -41,6 +41,7 @@ YubiKey's PIV applet, run:
 
 ```
 go test -v ./piv --wipe-yubikey
+go test -v ./piv-ssh-agent --wipe-yubikey
 ```
 
 Longer tests can be skipped with the `--test.short` flag.
