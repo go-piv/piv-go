@@ -19,19 +19,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"io"
 	"math/bits"
 	"strings"
 	"testing"
+
+	"github.com/ericchiang/piv-go/internal/pivtest"
 )
-
-var canModifyYubiKey bool
-
-func init() {
-	flag.BoolVar(&canModifyYubiKey, "wipe-yubikey", false,
-		"Flag required to run tests that access the yubikey")
-}
 
 func testGetVersion(t *testing.T, h *scHandle) {
 	tx, err := h.Begin()
@@ -64,7 +58,7 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 		if !strings.Contains(strings.ToLower(card), "yubikey") {
 			continue
 		}
-		if !canModifyYubiKey {
+		if !pivtest.CanModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
 		yk, err := Open(card)
