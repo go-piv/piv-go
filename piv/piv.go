@@ -259,7 +259,7 @@ func encodePIN(pin string) ([]byte, error) {
 	return data, nil
 }
 
-// AuthPIN attempts to authenticate against the card with the provided PIN.
+// authPIN attempts to authenticate against the card with the provided PIN.
 // The PIN is required to use and modify certain slots.
 //
 // After a specific number of authentication attemps with an invalid PIN,
@@ -267,7 +267,7 @@ func encodePIN(pin string) ([]byte, error) {
 // point the PUK must be used to unblock the PIN.
 //
 // Use DefaultPIN if the PIN hasn't been set.
-func (yk *YubiKey) AuthPIN(pin string) error {
+func (yk *YubiKey) authPIN(pin string) error {
 	tx, err := yk.begin()
 	if err != nil {
 		return err
@@ -384,12 +384,12 @@ type version struct {
 	patch byte
 }
 
-// AuthManagementKey attempts to authenticate against the card with the provided
+// authManagementKey attempts to authenticate against the card with the provided
 // management key. The management key is required to generate new keys or add
 // certificates to slots.
 //
 // Use DefaultManagementKey if the management key hasn't been set.
-func (yk *YubiKey) AuthManagementKey(key [24]byte) error {
+func (yk *YubiKey) authManagementKey(key [24]byte) error {
 	tx, err := yk.begin()
 	if err != nil {
 		return err
