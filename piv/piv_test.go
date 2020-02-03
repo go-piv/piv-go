@@ -110,7 +110,7 @@ func TestYubiKeyReset(t *testing.T) {
 	if err := yk.Reset(); err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
 	}
-	if err := yk.AuthPIN(DefaultPIN); err != nil {
+	if err := yk.authPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 }
@@ -119,7 +119,7 @@ func TestYubiKeyLogin(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	if err := yk.AuthPIN(DefaultPIN); err != nil {
+	if err := yk.authPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 }
@@ -128,7 +128,7 @@ func TestYubiKeyAuthenticate(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	if err := yk.AuthManagementKey(DefaultManagementKey); err != nil {
+	if err := yk.authManagementKey(DefaultManagementKey); err != nil {
 		t.Errorf("authenticating: %v", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestYubiKeySetManagementKey(t *testing.T) {
 	if err := yk.SetManagementKey(DefaultManagementKey, mgmtKey); err != nil {
 		t.Fatalf("setting management key: %v", err)
 	}
-	if err := yk.AuthManagementKey(mgmtKey); err != nil {
+	if err := yk.authManagementKey(mgmtKey); err != nil {
 		t.Errorf("authenticating with new management key: %v", err)
 	}
 	if err := yk.SetManagementKey(mgmtKey, DefaultManagementKey); err != nil {
