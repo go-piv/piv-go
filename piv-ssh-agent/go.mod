@@ -5,6 +5,9 @@ module github.com/ericchiang/piv-go/piv-ssh-agent
 
 go 1.13
 
-require github.com/ericchiang/piv-go v0.0.0
+require (
+	github.com/ericchiang/piv-go v0.0.0
+	golang.org/x/crypto v0.0.0-20200128174031-69ecbb4d6d5d
+)
 
 replace github.com/ericchiang/piv-go => ../

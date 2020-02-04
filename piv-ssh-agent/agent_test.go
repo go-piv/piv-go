@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -26,9 +27,10 @@ import (
 
 	"github.com/ericchiang/piv-go/internal/pivtest"
 	"github.com/ericchiang/piv-go/piv"
+	"golang.org/x/crypto/ssh"
 )
 
-func newTestAgent(t *testing.T) (*agent, func()) {
+func newTestAgent(t *testing.T) (*sshAgent, func()) {
 	tempdir, err := ioutil.TempDir("", "")
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
@@ -80,6 +82,73 @@ func newTestYubiKey(t *testing.T) (*piv.YubiKey, func()) {
 	}
 	t.Skip("no yubikeys detected, skipping")
 	return nil, nil
+}
+
+func TestSign(t *testing.T) {
+	serial := newTestYubiKeySerial(t)
+
+	a, cleanup := newTestAgent(t)
+	defer cleanup()
+	if err := a.reset(true, serial); err != nil {
+		t.Fatalf("resetting card")
+	}
+	if err := a.initCard(serial); err != nil {
+		t.Fatalf("initializing card: %v", err)
+	}
+
+	keys, err := a.List()
+	if err != nil {
+		t.Fatalf("listing public keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 public key got %d", len(keys))
+	}
+	key := keys[0]
+	pub, err := ssh.ParsePublicKey(key.Blob)
+	if err != nil {
+		t.Fatalf("parsing public key: %v", err)
+	}
+
+	data := sha256.Sum256([]byte("hi"))
+	sig, err := a.Sign(pub, data[:])
+	if err != nil {
+		t.Fatalf("signig data: %v", err)
+	}
+	if err := key.Verify(data[:], sig); err != nil {
+		t.Errorf("verifying signature failed: %v", err)
+	}
+}
+
+func TestSigners(t *testing.T) {
+	serial := newTestYubiKeySerial(t)
+
+	a, cleanup := newTestAgent(t)
+	defer cleanup()
+	if err := a.reset(true, serial); err != nil {
+		t.Fatalf("resetting card")
+	}
+	if err := a.initCard(serial); err != nil {
+		t.Fatalf("initializing card: %v", err)
+	}
+
+	signers, err := a.Signers()
+	if err != nil {
+		t.Fatalf("listing signers: %v", err)
+	}
+	if len(signers) != 1 {
+		t.Fatalf("expected 1 signer got %d", len(signers))
+	}
+	s := signers[0]
+
+	data := sha256.Sum256([]byte("hi"))
+	sig, err := s.Sign(rand.Reader, data[:])
+	if err != nil {
+		t.Fatalf("signig data: %v", err)
+	}
+	if err := s.PublicKey().Verify(data[:], sig); err != nil {
+		t.Fatalf("verifying data: %v", err)
+	}
+
 }
 
 func TestGenerateCreds(t *testing.T) {
