@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -33,6 +34,8 @@ import (
 	"time"
 
 	"github.com/ericchiang/piv-go/piv"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 const (
@@ -44,7 +47,7 @@ type config struct {
 	home string
 }
 
-func newAgent(c config) (*agent, error) {
+func newAgent(c config) (*sshAgent, error) {
 	home := c.home
 	if home == "" {
 		h, err := os.UserHomeDir()
@@ -63,17 +66,216 @@ func newAgent(c config) (*agent, error) {
 		}
 	}
 
-	return &agent{dir, rand.Reader}, nil
+	return &sshAgent{dir, rand.Reader}, nil
 }
 
-type agent struct {
+type sshAgent struct {
 	dir string
 
 	// source of randomness
 	rand io.Reader
 }
 
-func (a *agent) listManagedCards() ([]uint32, error) {
+func (a *sshAgent) List() ([]*agent.Key, error) {
+	var keys []*agent.Key
+	err := a.visitCards(func(yk *piv.YubiKey, cred credential) (bool, error) {
+		cert, err := yk.Certificate(piv.SlotAuthentication)
+		if err != nil {
+			return false, fmt.Errorf("getting ssh key: %v", err)
+		}
+		pub, err := ssh.NewPublicKey(cert.PublicKey)
+		if err != nil {
+			return false, fmt.Errorf("getting ssh public key: %v", err)
+		}
+		key := &agent.Key{
+			Format:  pub.Type(),
+			Blob:    pub.Marshal(),
+			Comment: cert.Subject.CommonName,
+		}
+		keys = append(keys, key)
+		return false, nil
+	})
+	return keys, err
+}
+
+func (a *sshAgent) visitCards(visit func(yk *piv.YubiKey, cred credential) (bool, error)) error {
+	creds, err := a.listCredentials()
+	if err != nil {
+		return fmt.Errorf("listing cards: %v", err)
+	}
+	if len(creds) == 0 {
+		return nil
+	}
+	cards, err := piv.Cards()
+	if err != nil {
+		return fmt.Errorf("listing cards: %v", err)
+	}
+	for _, card := range cards {
+		if !isYubiKey(card) {
+			continue
+		}
+		yk, err := piv.Open(card)
+		if err != nil {
+			return fmt.Errorf("opening card: %v", err)
+		}
+		s, err := yk.Serial()
+		if err != nil {
+			yk.Close()
+			return fmt.Errorf("getting serial: %v", err)
+		}
+		var done bool
+		for _, cred := range creds {
+			if cred.serial != s {
+				continue
+			}
+			done, err = visit(yk, cred)
+			break
+		}
+		yk.Close()
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (a *sshAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	var sig *ssh.Signature
+	err := a.visitCards(func(yk *piv.YubiKey, cred credential) (bool, error) {
+		cert, err := yk.Certificate(piv.SlotAuthentication)
+		if err != nil {
+			return false, fmt.Errorf("getting ssh key: %v", err)
+		}
+		pub, err := ssh.NewPublicKey(cert.PublicKey)
+		if err != nil {
+			return false, fmt.Errorf("getting ssh public key: %v", err)
+		}
+		if !bytes.Equal(key.Marshal(), pub.Marshal()) {
+			return false, nil
+		}
+		auth := piv.KeyAuth{PIN: cred.pin}
+		priv, err := yk.PrivateKey(piv.SlotAuthentication, cert.PublicKey, auth)
+		if err != nil {
+			return false, fmt.Errorf("getting private key: %v", err)
+		}
+		signer, ok := priv.(crypto.Signer)
+		if !ok {
+			return false, fmt.Errorf("key doesn't implement signer")
+		}
+		s, err := ssh.NewSignerFromSigner(signer)
+		if err != nil {
+			return false, fmt.Errorf("initializing ssh signer: %v", err)
+		}
+		sshSig, err := s.Sign(rand.Reader, data)
+		if err != nil {
+			return false, fmt.Errorf("signing data: %v", err)
+		}
+		sig = sshSig
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if sig == nil {
+		return nil, fmt.Errorf("card not found")
+	}
+	return sig, nil
+}
+
+// deferredSigner implement ssh.Signer without holding an active connection to
+// a YubiKey.
+type deferredSigner struct {
+	agent  *sshAgent
+	serial uint32
+
+	// pub is required to access the private key, while sshPub is required to
+	// satisfy the ssh.Signer interface.
+	pub    crypto.PublicKey
+	sshPub ssh.PublicKey
+}
+
+func (d *deferredSigner) PublicKey() ssh.PublicKey {
+	return d.sshPub
+}
+
+func (d *deferredSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	var sig *ssh.Signature
+	err := d.agent.visitCards(func(yk *piv.YubiKey, cred credential) (bool, error) {
+		if cred.serial != d.serial {
+			return false, nil
+		}
+		auth := piv.KeyAuth{PIN: cred.pin}
+		priv, err := yk.PrivateKey(piv.SlotAuthentication, d.pub, auth)
+		if err != nil {
+			return false, fmt.Errorf("getting private key: %v", err)
+		}
+		signer, ok := priv.(crypto.Signer)
+		if !ok {
+			return false, fmt.Errorf("key doesn't implement signer")
+		}
+		s, err := ssh.NewSignerFromSigner(signer)
+		if err != nil {
+			return false, fmt.Errorf("initializing ssh signer: %v", err)
+		}
+		sshSig, err := s.Sign(rand, data)
+		if err != nil {
+			return false, fmt.Errorf("signing data: %v", err)
+		}
+		sig = sshSig
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sig, nil
+}
+
+func (a *sshAgent) Signers() ([]ssh.Signer, error) {
+	var signers []ssh.Signer
+	err := a.visitCards(func(yk *piv.YubiKey, cred credential) (bool, error) {
+		cert, err := yk.Certificate(piv.SlotAuthentication)
+		if err != nil {
+			return false, fmt.Errorf("getting ssh key: %v", err)
+		}
+		pub, err := ssh.NewPublicKey(cert.PublicKey)
+		if err != nil {
+			return false, fmt.Errorf("getting ssh public key: %v", err)
+		}
+		signers = append(signers, &deferredSigner{
+			agent:  a,
+			serial: cred.serial,
+			pub:    cert.PublicKey,
+			sshPub: pub,
+		})
+		return false, nil
+	})
+	return signers, err
+}
+
+func (a *sshAgent) Add(key agent.AddedKey) error {
+	return fmt.Errorf("adding keys to agent not supported")
+}
+
+func (a *sshAgent) Remove(key ssh.PublicKey) error {
+	return fmt.Errorf("removing keys from agent not supported")
+}
+
+func (a *sshAgent) RemoveAll() error {
+	return fmt.Errorf("removing keys from agent not supported")
+}
+
+func (a *sshAgent) Lock(passphrase []byte) error {
+	return fmt.Errorf("locking agent not supported")
+}
+
+func (a *sshAgent) Unlock(passphrase []byte) error {
+	return fmt.Errorf("unlocking agent not supported")
+}
+
+func (a *sshAgent) listManagedCards() ([]uint32, error) {
 	creds, err := a.listCredentials()
 	if err != nil {
 		return nil, err
@@ -85,7 +287,7 @@ func (a *agent) listManagedCards() ([]uint32, error) {
 	return serials, nil
 }
 
-func (a *agent) listCredentials() ([]credential, error) {
+func (a *sshAgent) listCredentials() ([]credential, error) {
 	p := filepath.Join(a.dir, agentFilepathCreds)
 	data, err := ioutil.ReadFile(p)
 	if err != nil {
@@ -100,7 +302,7 @@ func (a *agent) listCredentials() ([]credential, error) {
 	return creds, nil
 }
 
-func (a *agent) addManagedCard(cred credential) error {
+func (a *sshAgent) addManagedCard(cred credential) error {
 	creds, err := a.listCredentials()
 	if err != nil {
 		return err
@@ -143,6 +345,9 @@ type keyGenerator struct {
 	now  func() time.Time
 }
 
+// newSSHKey generates a SSH key in a YubiKey's slot. Since we need to track the
+// public key, newSSHKey also generates a self-signed certificate and stores it
+// in the key's associated certificate slot.
 func (k *keyGenerator) newSSHKey(yk *piv.YubiKey, mgmtKey [24]byte) error {
 	key := piv.Key{
 		Algorithm:   piv.AlgorithmEC256,
@@ -220,7 +425,7 @@ func (k *keyGenerator) newSSHKey(yk *piv.YubiKey, mgmtKey [24]byte) error {
 	return nil
 }
 
-func (a *agent) initCard(serial uint32) error {
+func (a *sshAgent) initCard(serial uint32) error {
 	cards, err := a.listManagedCards()
 	if err != nil {
 		return fmt.Errorf("listing existing managed cards: %v", err)
@@ -344,7 +549,7 @@ func isYubiKey(card string) bool {
 	return strings.Contains(strings.ToLower(card), "yubikey")
 }
 
-func (a *agent) reset(force bool, serial uint32) error {
+func (a *sshAgent) reset(force bool, serial uint32) error {
 	yk, err := openCard(serial)
 	if err != nil {
 		return err
