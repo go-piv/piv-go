@@ -21,6 +21,8 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"os/user"
+	"path/filepath"
 
 	"github.com/ericchiang/piv-go/piv"
 )
@@ -35,7 +37,7 @@ Subcommands:
     init  Initialize a YubiKey.
     list  List all available YubiKeys and which ones have been initialized.
     reset Reset the PIV applet on a YubiKey.
-    run   Run the agent and begin listening for requests on a socket.
+    serve Run the agent and begin listening for requests on a socket.
 
 `)
 }
@@ -85,6 +87,25 @@ Example:
 `)
 }
 
+func usageServe(w io.Writer) {
+	fmt.Fprint(w, `Usage: piv-ssh-agent serve [flags]
+
+Begin serving the SSH agent socket.
+
+Flags:
+
+    --sock  Path to agent socket. Defaults to /run/user/$UID/piv-ssh-agent/auth.sock
+
+Example:
+
+    $ piv-ssh-agent serve
+	// In another tab
+	$ export SSH_AUTH_SOCK=/run/user/$UID/piv-ssh-agent/auth.sock
+	$ ssh-add -L
+
+`)
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage(os.Stderr)
@@ -99,6 +120,8 @@ func main() {
 		err = cmdList(os.Args[2:])
 	case "reset":
 		err = cmdReset(os.Args[2:])
+	case "serve":
+		err = cmdServe(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unrecognized command: %s\n", os.Args[1])
 		os.Exit(1)
@@ -229,4 +252,41 @@ func cmdInit(args []string) error {
 		return fmt.Errorf("initializing agent: %v", err)
 	}
 	return a.initCard(serial)
+}
+
+func cmdServe(args []string) error {
+	var sockPath string
+	fs := newFlagSet()
+	fs.StringVar(&sockPath, "", "", "")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			usageServe(os.Stdout)
+			return nil
+		}
+		return fmt.Errorf("parsing flags: %v", err)
+	}
+	a, err := newAgent(config{})
+	if err != nil {
+		return fmt.Errorf("initializing agent: %v", err)
+	}
+	switch len(fs.Args()) {
+	case 0:
+		return fmt.Errorf("usage: piv-ssh-agent init [flags] [serial number]")
+	case 1:
+	default:
+		return fmt.Errorf("invalid number of arguments")
+	}
+	u, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("determining current user: %v", err)
+	}
+	if sockPath == "" {
+		sockPath = filepath.Join("/run/user", u.Uid, "piv-ssh-agent/auth.sock")
+	}
+	l, err := listen(a, sockPath)
+	if err != nil {
+		return err
+	}
+	defer l.close()
+	return l.wait()
 }
