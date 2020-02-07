@@ -34,7 +34,7 @@ An SSH agent that stores SSH keys on a YubiKey.
 
 Subcommands:
 
-    init  Initialize a YubiKey.
+    add   Initialize a key on a YubiKey.
     list  List all available YubiKeys and which ones have been initialized.
     reset Reset the PIV applet on a YubiKey.
     serve Run the agent and begin listening for requests on a socket.
@@ -69,8 +69,8 @@ Example:
 `)
 }
 
-func usageInit(w io.Writer) {
-	fmt.Fprint(w, `Usage: piv-ssh-agent init [flags] [serial number]
+func usageAdd(w io.Writer) {
+	fmt.Fprint(w, `Usage: piv-ssh-agent add [flags] [serial number]
 
 Initialize a YubiKey with a random PIN, PUK, and Management Key, and generate
 an SSH key on the card.
@@ -82,7 +82,7 @@ Example:
 
     $ piv-ssh-agent list
     Yubico YubiKey OTP+FIDO+CCID: 005d404d
-    $ piv-ssh-agent init 005d404d
+    $ piv-ssh-agent add 005d404d
 
 `)
 }
@@ -116,6 +116,8 @@ func main() {
 	case "-h", "--help":
 		usage(os.Stdout)
 		os.Exit(0)
+	case "add":
+		err = cmdAdd(os.Args[2:])
 	case "list":
 		err = cmdList(os.Args[2:])
 	case "reset":
@@ -225,18 +227,18 @@ func cmdReset(args []string) error {
 	return a.reset(force, serial)
 }
 
-func cmdInit(args []string) error {
+func cmdAdd(args []string) error {
 	fs := newFlagSet()
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			usageInit(os.Stdout)
+			usageAdd(os.Stdout)
 			return nil
 		}
 		return fmt.Errorf("parsing flags: %v", err)
 	}
 	switch len(fs.Args()) {
 	case 0:
-		return fmt.Errorf("usage: piv-ssh-agent init [flags] [serial number]")
+		return fmt.Errorf("usage: piv-ssh-agent add [flags] [serial number]")
 	case 1:
 	default:
 		return fmt.Errorf("invalid number of arguments")
