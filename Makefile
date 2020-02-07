@@ -1,6 +1,6 @@
 .PHONY: build
 build:
-	go build -o bin/piv-ssh-agent piv-ssh-agent/*.go
+	cd piv-ssh-agent && go build -o ../bin/piv-ssh-agent *.go
 
 .PHONY: test
 test:
