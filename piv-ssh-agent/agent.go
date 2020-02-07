@@ -28,6 +28,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,58 @@ const (
 	agentFilepathCreds = "creds"
 	agentFilepathAuth  = "auth.sock"
 )
+
+type listener struct {
+	errCh chan error
+	path  string
+	l     net.Listener
+}
+
+func (l *listener) wait() error {
+	return <-l.errCh
+}
+
+func (l *listener) close() error {
+	err1 := l.l.Close()
+	err2 := os.Remove(l.path)
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
+
+func listen(a agent.Agent, path string) (*listener, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create socket dir: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("remove existing socket: %v", err)
+
+		}
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listening on socket: %v", err)
+	}
+	errCh := make(chan error)
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				errCh <- fmt.Errorf("accept connection: %v", err)
+				return
+			}
+
+			// TODO: add logging for agent
+			go agent.ServeAgent(a, conn)
+		}
+	}()
+
+	return &listener{errCh: errCh, path: path, l: l}, nil
+}
 
 type config struct {
 	home string

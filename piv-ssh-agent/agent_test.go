@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,6 +29,7 @@ import (
 	"github.com/ericchiang/piv-go/internal/pivtest"
 	"github.com/ericchiang/piv-go/piv"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func newTestAgent(t *testing.T) (*sshAgent, func()) {
@@ -189,6 +191,43 @@ func TestCmdReset(t *testing.T) {
 	defer cleanup()
 	if err := a.reset(true, serial); err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
+	}
+}
+
+func TestServeAgent(t *testing.T) {
+	serial := newTestYubiKeySerial(t)
+	a, cleanup := newTestAgent(t)
+	defer cleanup()
+
+	if err := a.reset(true, serial); err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+	if err := a.initCard(serial); err != nil {
+		t.Fatalf("initializing card: %v", err)
+	}
+
+	sockPath := filepath.Join(a.dir, "auth.sock")
+
+	l, err := listen(a, sockPath)
+	if err != nil {
+		t.Fatalf("listening: %v", err)
+	}
+	defer l.wait()
+	defer l.close()
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("dialing socket: %v", err)
+	}
+	defer conn.Close()
+
+	client := agent.NewClient(conn)
+	keys, err := client.List()
+	if err != nil {
+		t.Fatalf("listing keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
 	}
 }
 
