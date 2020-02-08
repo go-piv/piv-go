@@ -134,15 +134,6 @@ func main() {
 	}
 }
 
-func contains(sli []uint32, ele uint32) bool {
-	for _, e := range sli {
-		if e == ele {
-			return true
-		}
-	}
-	return false
-}
-
 func cmdList(args []string) error {
 	if len(args) > 0 {
 		if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
@@ -151,42 +142,29 @@ func cmdList(args []string) error {
 		}
 		return fmt.Errorf("list subcommand takes no arguments")
 	}
-	a, err := newAgent(config{})
-	if err != nil {
-		return fmt.Errorf("initializing agent: %v", err)
-	}
-	managedCards, err := a.listManagedCards()
-	if err != nil {
-		return fmt.Errorf("fetching cards managed by agent: %v", err)
-	}
 	cards, err := piv.Cards()
 	if err != nil {
 		return fmt.Errorf("listing cards: %v", err)
 	}
-	gotErr := false
+	found := false
 	for _, card := range cards {
 		if !isYubiKey(card) {
 			continue
 		}
 		yk, err := piv.Open(card)
 		if err != nil {
-			fmt.Println(card, err)
-			continue
+			return fmt.Errorf("opening card %s: %v", card, err)
 		}
 		serial, err := yk.Serial()
 		yk.Close()
 		if err != nil {
-			fmt.Println(card, err)
-			continue
+			return fmt.Errorf("getting serial number of card %s: %v", card, err)
 		}
-		if contains(managedCards, serial) {
-			fmt.Printf("%s: %08x\n", card, serial)
-		} else {
-			fmt.Printf("%s (uninitialized): %08x\n", card, serial)
-		}
+		fmt.Printf("%s: %08x\n", card, serial)
+		found = true
 	}
-	if gotErr {
-		return fmt.Errorf("failed to query cards")
+	if !found {
+		fmt.Fprintln(os.Stderr, "[no yubikeys found]")
 	}
 	return nil
 }
@@ -271,12 +249,8 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing agent: %v", err)
 	}
-	switch len(fs.Args()) {
-	case 0:
-		return fmt.Errorf("usage: piv-ssh-agent init [flags] [serial number]")
-	case 1:
-	default:
-		return fmt.Errorf("invalid number of arguments")
+	if len(fs.Args()) != 0 {
+		return fmt.Errorf("usage: piv-ssh-agent serve [flags] [serial number]")
 	}
 	u, err := user.Current()
 	if err != nil {
@@ -285,7 +259,7 @@ func cmdServe(args []string) error {
 	if sockPath == "" {
 		sockPath = filepath.Join("/run/user", u.Uid, "piv-ssh-agent/auth.sock")
 	}
-	l, err := listen(a, sockPath)
+	l, err := a.listen(sockPath)
 	if err != nil {
 		return err
 	}

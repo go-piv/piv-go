@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -42,7 +43,10 @@ func newTestAgent(t *testing.T) (*sshAgent, func()) {
 			t.Errorf("cleaning up temp dir: %v", err)
 		}
 	}
-	a, err := newAgent(config{home: tempdir})
+	a, err := newAgent(config{
+		home:   tempdir,
+		logger: log.New(ioutil.Discard, "", log.LstdFlags),
+	})
 	if err != nil {
 		cleanup()
 		t.Fatalf("new agent: %v", err)
@@ -208,7 +212,7 @@ func TestServeAgent(t *testing.T) {
 
 	sockPath := filepath.Join(a.dir, "auth.sock")
 
-	l, err := listen(a, sockPath)
+	l, err := a.listen(sockPath)
 	if err != nil {
 		t.Fatalf("listening: %v", err)
 	}
