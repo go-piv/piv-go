@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"math/big"
 	"net"
 	"os"
@@ -63,7 +64,7 @@ func (l *listener) close() error {
 	return err2
 }
 
-func listen(a agent.Agent, path string) (*listener, error) {
+func (a *sshAgent) listen(path string) (*listener, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("create socket dir: %v", err)
@@ -79,6 +80,7 @@ func listen(a agent.Agent, path string) (*listener, error) {
 		return nil, fmt.Errorf("listening on socket: %v", err)
 	}
 	errCh := make(chan error)
+	a.logf("listening on: %s", path)
 
 	go func() {
 		for {
@@ -97,7 +99,8 @@ func listen(a agent.Agent, path string) (*listener, error) {
 }
 
 type config struct {
-	home string
+	home   string
+	logger *log.Logger
 }
 
 func newAgent(c config) (*sshAgent, error) {
@@ -119,7 +122,12 @@ func newAgent(c config) (*sshAgent, error) {
 		}
 	}
 
-	return &sshAgent{dir, rand.Reader}, nil
+	logger := c.logger
+	if logger == nil {
+		logger = log.New(os.Stderr, "", log.LstdFlags)
+	}
+
+	return &sshAgent{dir, rand.Reader, logger}, nil
 }
 
 type sshAgent struct {
@@ -127,6 +135,12 @@ type sshAgent struct {
 
 	// source of randomness
 	rand io.Reader
+
+	logger *log.Logger
+}
+
+func (a *sshAgent) logf(format string, v ...interface{}) {
+	a.logger.Printf(format, v...)
 }
 
 func (a *sshAgent) List() ([]*agent.Key, error) {
@@ -361,6 +375,10 @@ func (a *sshAgent) addManagedCard(cred credential) error {
 		return err
 	}
 	creds = append(creds, cred)
+	return a.setCredentials(creds)
+}
+
+func (a *sshAgent) setCredentials(creds []credential) error {
 	data := marshalCredentials(creds)
 
 	if err := os.MkdirAll(a.dir, 0755); err != nil {
@@ -616,7 +634,17 @@ func (a *sshAgent) reset(force bool, serial uint32) error {
 	if err := yk.Reset(); err != nil {
 		return fmt.Errorf("resetting card: %v", err)
 	}
-	return nil
+	creds, err := a.listCredentials()
+	if err != nil {
+		return fmt.Errorf("listing existing credentials: %v", err)
+	}
+	var newCreds []credential
+	for _, c := range creds {
+		if c.serial != serial {
+			newCreds = append(newCreds, c)
+		}
+	}
+	return a.setCredentials(newCreds)
 }
 
 func resetPrompt() error {
