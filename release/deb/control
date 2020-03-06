@@ -1,8 +1,0 @@
-Package: piv-ssh-agent
-Version: 0.1.0
-Maintainer: "Eric Chiang" <eric.chiang.m@gmail.com>
-Architecture: amd64
-Depends: libpcsclite-dev
-Priority: optional
-Description:
-  Tool for managing SSH keys on a YubiKey.
