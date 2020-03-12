@@ -62,7 +62,7 @@ if err != nil {
 	// ...
 }
 
-auth := piv.KeyAuth{PIN: DefaultPIN}
+auth := piv.KeyAuth{PIN: piv.DefaultPIN}
 priv, err := yk.PrivateKey(piv.SlotAuthentication, pub, auth)
 if err != nil {
 	// ...
