@@ -70,18 +70,18 @@ const (
 // Attestation returns additional information about a key attested to be on a
 // card.
 type Attestation struct {
-	// Version is the version of the YubiKey's firmware.
+	// Version of the YubiKey's firmware.
 	Version Version
-	// Serial is the serial number of YubiKey.
+	// Serial is the YubiKey's serial number.
 	Serial uint32
 	// Formfactor indicates the physical type of the YubiKey.
 	//
 	// Formfactor may be empty Formfactor(0) for some YubiKeys.
 	Formfactor Formfactor
 
-	// PINPolicy is the PIN policy set on the slot.
+	// PINPolicy set on the slot.
 	PINPolicy PINPolicy
-	// TouchPolicy is the Touch policy set on the slot.
+	// TouchPolicy set on the slot.
 	TouchPolicy TouchPolicy
 }
 
@@ -520,9 +520,6 @@ type KeyAuth struct {
 	PIN string
 	// PINPrompt should be used to interactively request the PIN from the user.
 	PINPrompt func() (pin string, err error)
-
-	// TouchPrompt is used to prompt the user for a key touch.
-	TouchPrompt func() error
 }
 
 func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
@@ -549,12 +546,6 @@ func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
 		}
 		if err := ykLogin(tx, pin); err != nil {
 			return nil, fmt.Errorf("authenticating with pin: %v", err)
-		}
-	}
-
-	if k.TouchPrompt != nil {
-		if err := k.TouchPrompt(); err != nil {
-			return nil, fmt.Errorf("requesting touch: %v", err)
 		}
 	}
 	return tx, nil
