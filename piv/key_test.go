@@ -191,6 +191,48 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 	}
 }
 
+func TestYubiKeyAttestation(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+	key := Key{
+		Algorithm:   AlgorithmEC256,
+		PINPolicy:   PINPolicyNever,
+		TouchPolicy: TouchPolicyNever,
+	}
+
+	cert, err := yk.AttestationCertificate()
+	if err != nil {
+		t.Fatalf("getting attestation certificate: %v", err)
+	}
+
+	pub, err := yk.GenerateKey(DefaultManagementKey, SlotAuthentication, key)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	_ = pub
+	c, err := yk.Attest(SlotAuthentication)
+	if err != nil {
+		t.Fatalf("attesting key: %v", err)
+	}
+	a, err := Verify(cert, c)
+	if err != nil {
+		t.Fatalf("failed to verify attestation: %v", err)
+	}
+	serial, err := yk.Serial()
+	if err != nil {
+		t.Errorf("getting serial number: %v", err)
+	} else if a.Serial != serial {
+		t.Errorf("attestation serial got=%d, wanted=%d", a.Serial, serial)
+	}
+
+	if a.PINPolicy != key.PINPolicy {
+		t.Errorf("attestation pin policy got=0x%x, wanted=0x%x", a.TouchPolicy, key.PINPolicy)
+	}
+	if a.TouchPolicy != key.TouchPolicy {
+		t.Errorf("attestation touch policy got=0x%x, wanted=0x%x", a.TouchPolicy, key.TouchPolicy)
+	}
+}
+
 func TestYubiKeyStoreCertificate(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()

@@ -15,12 +15,15 @@
 package piv
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"math/big"
@@ -38,11 +41,191 @@ type Slot struct {
 	Object uint32
 }
 
+var (
+	extIDFirmwareVersion = asn1.ObjectIdentifier([]int{1, 3, 6, 1, 4, 1, 41482, 3, 3})
+	extIDSerialNumber    = asn1.ObjectIdentifier([]int{1, 3, 6, 1, 4, 1, 41482, 3, 7})
+	extIDKeyPolicy       = asn1.ObjectIdentifier([]int{1, 3, 6, 1, 4, 1, 41482, 3, 8})
+	extIDFormFactor      = asn1.ObjectIdentifier([]int{1, 3, 6, 1, 4, 1, 41482, 3, 9})
+)
+
+// Version encodes a major, minor, and patch version.
+type Version struct {
+	Major int
+	Minor int
+	Patch int
+}
+
+// Formfactor enumerates the physical set of forms a key can take. USB-A vs.
+// USB-C and Keychain vs. Nano.
+type Formfactor int
+
+// Formfactors recognized by this package.
+const (
+	FormfactorUSBAKeychain = iota + 1
+	FormfactorUSBANano
+	FormfactorUSBCKeychain
+	FormfactorUSBCNano
+)
+
+// Attestation returns additional information about a key attested to be on a
+// card.
+type Attestation struct {
+	// Version is the version of the YubiKey's firmware.
+	Version Version
+	// Serial is the serial number of YubiKey.
+	Serial uint32
+	// Formfactor indicates the physical type of the YubiKey.
+	//
+	// Formfactor may be empty Formfactor(0) for some YubiKeys.
+	Formfactor Formfactor
+
+	// PINPolicy is the PIN policy set on the slot.
+	PINPolicy PINPolicy
+	// TouchPolicy is the Touch policy set on the slot.
+	TouchPolicy TouchPolicy
+}
+
+func (a *Attestation) addExt(e pkix.Extension) error {
+	if e.Id.Equal(extIDFirmwareVersion) {
+		if len(e.Value) != 3 {
+			return fmt.Errorf("expected 3 bytes for firmware version, got: %d", len(e.Value))
+		}
+		a.Version = Version{
+			Major: int(e.Value[0]),
+			Minor: int(e.Value[1]),
+			Patch: int(e.Value[2]),
+		}
+	} else if e.Id.Equal(extIDSerialNumber) {
+		var serial int64
+		if _, err := asn1.Unmarshal(e.Value, &serial); err != nil {
+			return fmt.Errorf("parsing serial number: %v", err)
+		}
+		if serial < 0 {
+			return fmt.Errorf("serial number was negative: %d", serial)
+		}
+		a.Serial = uint32(serial)
+	} else if e.Id.Equal(extIDKeyPolicy) {
+		if len(e.Value) != 2 {
+			return fmt.Errorf("expected 2 bytes from key policy, got: %d", len(e.Value))
+		}
+		switch e.Value[0] {
+		case 0x01:
+			a.PINPolicy = PINPolicyNever
+		case 0x02:
+			a.PINPolicy = PINPolicyOnce
+		case 0x03:
+			a.PINPolicy = PINPolicyAlways
+		default:
+			return fmt.Errorf("unrecognized pin policy: 0x%x", e.Value[0])
+		}
+		switch e.Value[1] {
+		case 0x01:
+			a.TouchPolicy = TouchPolicyNever
+		case 0x02:
+			a.TouchPolicy = TouchPolicyAlways
+		case 0x03:
+			a.TouchPolicy = TouchPolicyCached
+		default:
+			return fmt.Errorf("unrecognized touch policy: 0x%x", e.Value[1])
+		}
+	} else if e.Id.Equal(extIDFormFactor) {
+		if len(e.Value) != 1 {
+			return fmt.Errorf("expected 1 byte from formfactor, got: %d", len(e.Value))
+		}
+		switch e.Value[0] {
+		case 0x01:
+			a.Formfactor = FormfactorUSBAKeychain
+		case 0x02:
+			a.Formfactor = FormfactorUSBANano
+		case 0x03:
+			a.Formfactor = FormfactorUSBCKeychain
+		case 0x04:
+			a.Formfactor = FormfactorUSBCNano
+		default:
+			return fmt.Errorf("unrecognized formfactor: 0x%x", e.Value[0])
+		}
+	}
+	return nil
+}
+
+func verifySignature(parent, c *x509.Certificate) error {
+	return parent.CheckSignature(c.SignatureAlgorithm, c.RawTBSCertificate, c.Signature)
+}
+
+// Verify proves that a key was generated on a YubiKey. It ensures the slot and
+// YubiKey certificate chains up to the Yubico CA, parsing additional information
+// out of the slot certificate, such as the touch and PIN policies of a key.
+func Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
+	var v verifier
+	return v.Verify(attestationCert, slotCert)
+}
+
+type verifier struct {
+	Root *x509.Certificate
+}
+
+func (v *verifier) Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
+	root := v.Root
+	if root == nil {
+		ca, err := yubicoCA()
+		if err != nil {
+			return nil, fmt.Errorf("parsing yubico ca: %v", err)
+		}
+		root = ca
+	}
+	if err := verifySignature(root, attestationCert); err != nil {
+		return nil, fmt.Errorf("attestation certifcate not signed by : %v", err)
+	}
+	if err := verifySignature(attestationCert, slotCert); err != nil {
+		return nil, fmt.Errorf("slot certificate not signed by attestation certifcate: %v", err)
+	}
+	var a Attestation
+	for _, ext := range slotCert.Extensions {
+		if err := a.addExt(ext); err != nil {
+			return nil, fmt.Errorf("parsing extension: %v", err)
+		}
+	}
+	return &a, nil
+}
+
+// yubicoPIVCAPEM is the PEM encoded attestation certificate used by Yubico.
+//
+// https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
+const yubicoPIVCAPEM = `-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIDBAZHMA0GCSqGSIb3DQEBCwUAMCsxKTAnBgNVBAMMIFl1
+YmljbyBQSVYgUm9vdCBDQSBTZXJpYWwgMjYzNzUxMCAXDTE2MDMxNDAwMDAwMFoY
+DzIwNTIwNDE3MDAwMDAwWjArMSkwJwYDVQQDDCBZdWJpY28gUElWIFJvb3QgQ0Eg
+U2VyaWFsIDI2Mzc1MTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMN2
+cMTNR6YCdcTFRxuPy31PabRn5m6pJ+nSE0HRWpoaM8fc8wHC+Tmb98jmNvhWNE2E
+ilU85uYKfEFP9d6Q2GmytqBnxZsAa3KqZiCCx2LwQ4iYEOb1llgotVr/whEpdVOq
+joU0P5e1j1y7OfwOvky/+AXIN/9Xp0VFlYRk2tQ9GcdYKDmqU+db9iKwpAzid4oH
+BVLIhmD3pvkWaRA2H3DA9t7H/HNq5v3OiO1jyLZeKqZoMbPObrxqDg+9fOdShzgf
+wCqgT3XVmTeiwvBSTctyi9mHQfYd2DwkaqxRnLbNVyK9zl+DzjSGp9IhVPiVtGet
+X02dxhQnGS7K6BO0Qe8CAwEAAaNCMEAwHQYDVR0OBBYEFMpfyvLEojGc6SJf8ez0
+1d8Cv4O/MA8GA1UdEwQIMAYBAf8CAQEwDgYDVR0PAQH/BAQDAgEGMA0GCSqGSIb3
+DQEBCwUAA4IBAQBc7Ih8Bc1fkC+FyN1fhjWioBCMr3vjneh7MLbA6kSoyWF70N3s
+XhbXvT4eRh0hvxqvMZNjPU/VlRn6gLVtoEikDLrYFXN6Hh6Wmyy1GTnspnOvMvz2
+lLKuym9KYdYLDgnj3BeAvzIhVzzYSeU77/Cupofj093OuAswW0jYvXsGTyix6B3d
+bW5yWvyS9zNXaqGaUmP3U9/b6DlHdDogMLu3VLpBB9bm5bjaKWWJYgWltCVgUbFq
+Fqyi4+JE014cSgR57Jcu3dZiehB6UtAPgad9L5cNvua/IWRmm+ANy3O2LH++Pyl8
+SREzU8onbBsjMg9QDiSf5oJLKvd/Ren+zGY7
+-----END CERTIFICATE-----`
+
+func yubicoCA() (*x509.Certificate, error) {
+	b, _ := pem.Decode([]byte(yubicoPIVCAPEM))
+	if b == nil {
+		return nil, fmt.Errorf("failed to decode yubico pem data")
+	}
+	return x509.ParseCertificate(b.Bytes)
+}
+
 // Slot combinations pre-defined by this package.
 var (
 	SlotAuthentication     = Slot{0x9a, 0x5fc101}
 	SlotSignature          = Slot{0x9c, 0x5fc10a}
 	SlotCardAuthentication = Slot{0x9e, 0x5fc10b}
+
+	slotAttestation = Slot{0xf9, 0x5fff01}
 )
 
 // Algorithm represents a specific algorithm and bit size supported by the PIV
@@ -104,6 +287,47 @@ var algorithmsMap = map[Algorithm]byte{
 	AlgorithmEC384:   algECCP384,
 	AlgorithmRSA1024: algRSA1024,
 	AlgorithmRSA2048: algRSA2048,
+}
+
+// AttestationCertificate returns the YubiKey's attestation certificate, which
+// is unique to the key and signed by Yubico.
+func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
+	return yk.Certificate(slotAttestation)
+}
+
+// Attest generates a certificate for a key, signed by the YubiKey's attestation
+// certificate. This can be used to prove a key was generate on a specific
+// YubiKey.
+func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
+	tx, err := yk.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Close()
+	return ykAttest(tx, slot)
+}
+
+func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
+	cmd := apdu{
+		instruction: insAttest,
+		param1:      byte(slot.Key),
+	}
+	resp, err := ykTransmit(tx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %v", err)
+	}
+	if bytes.HasPrefix(resp, []byte{0x70}) {
+		b, _, err := unmarshalASN1(resp, 0, 0x10) // tag 0x70
+		if err != nil {
+			return nil, fmt.Errorf("unmarshaling certificate: %v", err)
+		}
+		resp = b
+	}
+	cert, err := x509.ParseCertificate(resp)
+	if err != nil {
+		return nil, fmt.Errorf("parsing certificate: %v", err)
+	}
+	return cert, nil
 }
 
 // Certificate returns the certifiate object stored in a given slot.
