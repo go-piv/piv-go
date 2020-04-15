@@ -554,6 +554,16 @@ func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
 // PrivateKey is used to access signing and decryption options for the key
 // stored in the slot. The returned key implements crypto.Signer and/or
 // crypto.Decrypter depending on the key type.
+//
+// If the public key hasn't been stored externally, it can be provided by
+// fetching the slot's attestation certificate:
+//
+//		cert, err := yk.Attest(slot)
+//		if err != nil {
+//			// ...
+//		}
+//		priv, err := yk.PrivateKey(slot, cert.PublicKey, auth)
+//
 func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) (crypto.PrivateKey, error) {
 	switch pub := public.(type) {
 	case *ecdsa.PublicKey:
