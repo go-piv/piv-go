@@ -86,11 +86,11 @@ capabilities.
 The following code generates new, random credentials for a YubiKey:
 
 ```go
-newPINInt, err := rand.Int(rand.Reader, bit.NewInt(1_000_000))
+newPINInt, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
 if err != nil {
 	// ...
 }
-newPUKInt, err := rand.Int(rand.Reader, bit.NewInt(100_000_000))
+newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
 if err != nil {
 	// ...
 }
@@ -106,7 +106,7 @@ newPUK := fmt.Sprintf("%08d", newPUKInt)
 if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey); err != nil {
 	// ...
 }
-if err := yk.SetPIN(piv.DefaultPUK, newPUK); err != nil {
+if err := yk.SetPUK(piv.DefaultPUK, newPUK); err != nil {
 	// ...
 }
 if err := yk.SetPIN(piv.DefaultPIN, newPIN); err != nil {
