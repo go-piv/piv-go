@@ -220,10 +220,17 @@ func yubicoCA() (*x509.Certificate, error) {
 }
 
 // Slot combinations pre-defined by this package.
+//
+// Object IDs are specified in NIST 800-73-4 section 4.3:
+// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=30
+//
+// Key IDs are specified in NIST 800-73-4 section 5.1:
+// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=32
 var (
-	SlotAuthentication     = Slot{0x9a, 0x5fc101}
+	SlotAuthentication     = Slot{0x9a, 0x5fc105}
 	SlotSignature          = Slot{0x9c, 0x5fc10a}
-	SlotCardAuthentication = Slot{0x9e, 0x5fc10b}
+	SlotCardAuthentication = Slot{0x9e, 0x5fc101}
+	SlotKeyManagement      = Slot{0x9d, 0x5fc10b}
 
 	slotAttestation = Slot{0xf9, 0x5fff01}
 )

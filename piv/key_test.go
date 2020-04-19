@@ -77,6 +77,66 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	}
 }
 
+func TestSlots(t *testing.T) {
+	tests := []struct {
+		name string
+		slot Slot
+	}{
+		{"Authentication", SlotAuthentication},
+		{"CardAuthentication", SlotCardAuthentication},
+		{"KeyManagement", SlotKeyManagement},
+		{"Signature", SlotSignature},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			yk, close := newTestYubiKey(t)
+			defer close()
+
+			k := Key{
+				Algorithm:   AlgorithmEC256,
+				PINPolicy:   PINPolicyNever,
+				TouchPolicy: TouchPolicyNever,
+			}
+			pub, err := yk.GenerateKey(DefaultManagementKey, test.slot, k)
+			if err != nil {
+				t.Fatalf("generating key on slot: %v", err)
+			}
+			priv, err := yk.PrivateKey(test.slot, pub, KeyAuth{PIN: DefaultPIN})
+			if err != nil {
+				t.Fatalf("private key: %v", err)
+			}
+
+			tmpl := &x509.Certificate{
+				Subject:      pkix.Name{CommonName: "my-client"},
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now(),
+				NotAfter:     time.Now().Add(time.Hour),
+				KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+				ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			}
+			raw, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+			if err != nil {
+				t.Fatalf("signing self-signed certificate: %v", err)
+			}
+			cert, err := x509.ParseCertificate(raw)
+			if err != nil {
+				t.Fatalf("parse certificate: %v", err)
+			}
+			if err := yk.SetCertificate(DefaultManagementKey, test.slot, cert); err != nil {
+				t.Fatalf("set certificate: %v", err)
+			}
+			got, err := yk.Certificate(test.slot)
+			if err != nil {
+				t.Fatalf("get certifiate: %v", err)
+			}
+			if !bytes.Equal(got.Raw, raw) {
+				t.Errorf("certificate from slot didn't match the certificate written")
+			}
+		})
+	}
+}
+
 func TestYubiKeySignRSA(t *testing.T) {
 	tests := []struct {
 		name string
