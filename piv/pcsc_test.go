@@ -15,6 +15,7 @@
 package piv
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -89,4 +90,48 @@ func TestTransaction(t *testing.T) {
 			t.Fatalf("closing transaction: %v", err)
 		}
 	})
+}
+
+func TestErrors(t *testing.T) {
+	var tests = []struct {
+		sw1, sw2      byte
+		isErrNotFound bool
+		isAuthErr     bool
+		retries       int
+		desc          string
+	}{
+		{0x68, 0x82, false, false, 0, "secure messaging not supported"},
+		{0x63, 0x00, false, true, 0, "verification failed"},
+		{0x63, 0xc0, false, true, 0, "verification failed (0 retries remaining)"},
+		{0x63, 0xc1, false, true, 1, "verification failed (1 retry remaining)"},
+		{0x63, 0xcf, false, true, 15, "verification failed (15 retries remaining)"},
+		{0x69, 0x83, false, true, 0, "authentication method blocked"},
+		{0x6a, 0x82, true, false, 0, "data object or application not found"},
+	}
+
+	for _, tc := range tests {
+		err := &apduErr{tc.sw1, tc.sw2}
+		if errors.Is(err, ErrNotFound) != tc.isErrNotFound {
+			var s string
+			if !tc.isErrNotFound {
+				s = " not"
+			}
+			t.Errorf("%q should%s be ErrNotFound", tc.desc, s)
+		}
+
+		var authErr AuthErr
+		if errors.As(err, &authErr) != tc.isAuthErr {
+			var s string
+			if !tc.isAuthErr {
+				s = " not"
+			}
+			t.Errorf("%q should%s be AuthErr", tc.desc, s)
+		}
+		if authErr.Retries != tc.retries {
+			t.Errorf("%q retries should be %d, got %d", tc.desc, tc.retries, authErr.Retries)
+		}
+		if !strings.Contains(err.Error(), tc.desc) {
+			t.Errorf("Error %v should contain text %v", err, tc.desc)
+		}
+	}
 }
