@@ -27,6 +27,7 @@ import "C"
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"unsafe"
 )
@@ -48,16 +49,94 @@ func (e *scErr) Error() string {
 	return fmt.Sprintf("unknown pcsc return code 0x%08x", e.rc)
 }
 
+// AuthErr is an error indicating an authentication error occurred (wrong PIN or blocked).
+type AuthErr struct {
+	// Retries is the number of retries remaining if this error resulted from a retriable
+	// authentication attempt.  If the authentication method is blocked or does not support
+	// retries, this will be 0.
+	Retries int
+}
+
+func (v AuthErr) Error() string {
+	r := "retries"
+	if v.Retries == 1 {
+		r = "retry"
+	}
+	return fmt.Sprintf("verification failed (%d %s remaining)", v.Retries, r)
+}
+
+// ErrNotFound is returned when the requested object on the smart card is not found.
+var ErrNotFound = errors.New("data object or application not found")
+
+// apduErr is an error interacting with the PIV application on the smart card.
+// This error may wrap more accessible errors, like ErrNotFound or an instance
+// of AuthErr, so callers are encouraged to use errors.Is and errors.As for
+// these common cases.
 type apduErr struct {
 	sw1 byte
 	sw2 byte
 }
 
+// Status returns the Status Word returned by the card command.
+func (a *apduErr) Status() uint16 {
+	return uint16(a.sw1)<<8 | uint16(a.sw2)
+}
+
 func (a *apduErr) Error() string {
-	// TODO: Generate error messages
-	// https://www.eftlab.com/knowledge-base/complete-list-of-apdu-responses/
-	// https://stackoverflow.com/questions/51558845/what-does-security-condition-not-satisfied-response-apdu-mean
-	return fmt.Sprintf("smart card response error: sw1=0x%02x, sw2=0x%02x", a.sw1, a.sw2)
+	var msg string
+	if u := a.Unwrap(); u != nil {
+		msg = u.Error()
+	}
+
+	switch a.Status() {
+	// 0x6300 is "verification failed", represented as AuthErr{0}
+	// 0x63Cn is "verification failed" with retry, represented as AuthErr{n}
+	case 0x6882:
+		msg = "secure messaging not supported"
+	case 0x6982:
+		msg = "security status not satisfied"
+	case 0x6983:
+		// This will also be AuthErr{0} but we override the message here
+		// so that it's clear that the reason is a block rather than a simple
+		// failed authentication verification.
+		msg = "authentication method blocked"
+	case 0x6987:
+		msg = "expected secure messaging data objects are missing"
+	case 0x6988:
+		msg = "secure messaging data objects are incorrect"
+	case 0x6a80:
+		msg = "incorrect parameter in command data field"
+	case 0x6a81:
+		msg = "function not supported"
+	// 0x6a82 is "data object or application not found" aka ErrNotFound
+	case 0x6a84:
+		msg = "not enough memory"
+	case 0x6a86:
+		msg = "incorrect parameter in P1 or P2"
+	case 0x6a88:
+		msg = "referenced data or reference data not found"
+	}
+
+	if msg != "" {
+		msg = ": " + msg
+	}
+	return fmt.Sprintf("smart card error %04x%s", a.Status(), msg)
+}
+
+// Unwrap retrieves an accessible error type, if able.
+func (a *apduErr) Unwrap() error {
+	st := a.Status()
+	switch {
+	case st == 0x6a82:
+		return ErrNotFound
+	case st == 0x6300:
+		return AuthErr{0}
+	case st == 0x6983:
+		return AuthErr{0}
+	case st&0xfff0 == 0x63c0:
+		return AuthErr{int(st & 0xf)}
+	}
+	return nil
 }
 
 type scContext struct {
@@ -161,7 +240,7 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 		(*C.BYTE)(&req[0]), reqN, nil,
 		(*C.BYTE)(&resp[0]), &respN)
 	if err := scCheck(rc); err != nil {
-		return false, nil, fmt.Errorf("transmitting request: %v", err)
+		return false, nil, fmt.Errorf("transmitting request: %w", err)
 	}
 	if respN < 2 {
 		return false, nil, fmt.Errorf("scard response too short: %d", respN)

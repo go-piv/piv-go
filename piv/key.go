@@ -319,9 +319,9 @@ func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
 		instruction: insAttest,
 		param1:      byte(slot.Key),
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 	if bytes.HasPrefix(resp, []byte{0x70}) {
 		b, _, err := unmarshalASN1(resp, 0, 0x10) // tag 0x70
@@ -360,9 +360,9 @@ func ykGetCertificate(tx *scTx, slot Slot) (*x509.Certificate, error) {
 			byte(slot.Object),
 		},
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=85
 	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
@@ -407,7 +407,7 @@ func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificat
 	}
 	defer tx.Close()
 	if err := ykAuthenticate(tx, key, yk.rand); err != nil {
-		return fmt.Errorf("authenticating with management key: %v", err)
+		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 	return ykStoreCertificate(tx, slot, cert)
 }
@@ -433,7 +433,7 @@ func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
 		param2:      0xff,
 		data:        data,
 	}
-	if _, err := ykTransmit(tx, cmd); err != nil {
+	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("command failed: %v", err)
 	}
 	return nil
@@ -461,7 +461,7 @@ func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.Public
 	}
 	defer tx.Close()
 	if err := ykAuthenticate(tx, key, yk.rand); err != nil {
-		return nil, fmt.Errorf("authenticating with management key: %v", err)
+		return nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
 	return ykGenerateKey(tx, slot, opts)
 }
@@ -492,9 +492,9 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 			tagTouchPolicy, 0x01, tp,
 		},
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 
 	var curve elliptic.Curve
@@ -660,9 +660,9 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, digest)...)),
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
 	if err != nil {
@@ -764,9 +764,9 @@ func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte,
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, data)...)),
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 
 	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
@@ -837,9 +837,9 @@ func ykSignRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, digest []byte, opts cryp
 			append([]byte{0x82, 0x00},
 				marshalASN1(0x81, data)...)),
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 
 	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c

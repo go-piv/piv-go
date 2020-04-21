@@ -43,55 +43,6 @@ var (
 	}
 )
 
-// errWrongPIN is the error returned when a login attempt fails because of an
-// invalid PIN or PUK.
-//
-// Use errors.As when checking for this error return.
-//
-//		err := yk.Login(badPIN)
-//		if err != nil {
-//			var e *yk.errWrongPIN
-//			if errors.As(err, &e) {
-//				// ...
-//			}
-//		}
-//
-type errWrongPIN struct {
-	Retries int
-}
-
-// Error reports the number of retries left for a PIN or PUK.
-func (e *errWrongPIN) Error() string {
-	s := "retries"
-	if e.Retries == 1 {
-		s = "retry"
-	}
-	return fmt.Sprintf("wrong pin, %d %s left", e.Retries, s)
-}
-
-func ykTransmit(tx *scTx, cmd apdu) ([]byte, error) {
-	resp, err := tx.Transmit(cmd)
-	if err == nil {
-		return resp, nil
-	}
-
-	// Check for specific errors.
-	var e *apduErr
-	if !errors.As(err, &e) {
-		return nil, err
-	}
-	// "Authentication method blocked"
-	if e.sw1 == 0x69 && e.sw2 == 0x83 {
-		return nil, &errWrongPIN{0}
-	}
-
-	// Verify fail status codes 0xc[0-f] communicate the number of retries.
-	if e.sw1 == 0x63 && (e.sw2&0xf0 == 0xc0) {
-		return nil, &errWrongPIN{int(e.sw2 ^ 0xc0)}
-	}
-	return nil, err
-}
-
 // Cards lists all smart cards available via PC/SC interface. Card names are
 // strings describing the key, such as "Yubico Yubikey NEO OTP+U2F+CCID 00 00".
 //
@@ -184,7 +135,7 @@ type client struct {
 func (c *client) Cards() ([]string, error) {
 	ctx, err := newSCContext()
 	if err != nil {
-		return nil, fmt.Errorf("connecting to pscs: %v", err)
+		return nil, fmt.Errorf("connecting to pscs: %w", err)
 	}
 	defer ctx.Close()
 	return ctx.ListReaders()
@@ -193,25 +144,25 @@ func (c *client) Cards() ([]string, error) {
 func (c *client) Open(card string) (*YubiKey, error) {
 	ctx, err := newSCContext()
 	if err != nil {
-		return nil, fmt.Errorf("connecting to smart card daemon: %v", err)
+		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
 	}
 
 	h, err := ctx.Connect(card)
 	if err != nil {
 		ctx.Close()
-		return nil, fmt.Errorf("connecting to smart card: %v", err)
+		return nil, fmt.Errorf("connecting to smart card: %w", err)
 	}
 
 	yk := &YubiKey{ctx: ctx, h: h}
 	tx, err := yk.begin()
 	if err != nil {
 		yk.Close()
-		return nil, fmt.Errorf("initializing yubikey: %v", err)
+		return nil, fmt.Errorf("initializing yubikey: %w", err)
 	}
 	v, err := ykVersion(tx)
 	if err != nil {
 		yk.Close()
-		return nil, fmt.Errorf("getting yubikey version: %v", err)
+		return nil, fmt.Errorf("getting yubikey version: %w", err)
 	}
 	yk.version = v
 	if c.Rand != nil {
@@ -225,11 +176,11 @@ func (c *client) Open(card string) (*YubiKey, error) {
 func (yk *YubiKey) begin() (*scTx, error) {
 	tx, err := yk.h.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("beginning smart card transaction: %v", err)
+		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
 	}
 	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
 		tx.Close()
-		return nil, fmt.Errorf("selecting piv applet: %v", err)
+		return nil, fmt.Errorf("selecting piv applet: %w", err)
 	}
 	return tx, nil
 }
@@ -283,7 +234,7 @@ func ykLogin(tx *scTx, pin string) error {
 	}
 
 	cmd := apdu{instruction: insVerify, param2: 0x80, data: data}
-	if _, err := ykTransmit(tx, cmd); err != nil {
+	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("verify pin: %w", err)
 	}
 	return nil
@@ -301,15 +252,15 @@ func (yk *YubiKey) Retries() (int, error) {
 
 func ykPINRetries(tx *scTx) (int, error) {
 	cmd := apdu{instruction: insVerify, param2: 0x80}
-	_, err := ykTransmit(tx, cmd)
+	_, err := tx.Transmit(cmd)
 	if err == nil {
 		return 0, fmt.Errorf("expected error code from empty pin")
 	}
-	var e *errWrongPIN
+	var e AuthErr
 	if errors.As(err, &e) {
 		return e.Retries, nil
 	}
-	return 0, fmt.Errorf("invalid response: %v", err)
+	return 0, fmt.Errorf("invalid response: %w", err)
 }
 
 // Reset resets the YubiKey PIV applet to its factory settings, wiping all slots
@@ -347,9 +298,9 @@ func ykReset(tx *scTx, r io.Reader) error {
 			// TODO: do we care about a 1/100million chance?
 			return fmt.Errorf("expected error with random pin")
 		}
-		var e *errWrongPIN
+		var e AuthErr
 		if !errors.As(err, &e) {
-			return fmt.Errorf("blocking pin: %v", err)
+			return fmt.Errorf("blocking pin: %w", err)
 		}
 		if e.Retries == 0 {
 			break
@@ -362,9 +313,9 @@ func ykReset(tx *scTx, r io.Reader) error {
 			// TODO: do we care about a 1/100million chance?
 			return fmt.Errorf("expected error with random puk")
 		}
-		var e *errWrongPIN
+		var e AuthErr
 		if !errors.As(err, &e) {
-			return fmt.Errorf("blocking puk: %v", err)
+			return fmt.Errorf("blocking puk: %w", err)
 		}
 		if e.Retries == 0 {
 			break
@@ -372,8 +323,8 @@ func ykReset(tx *scTx, r io.Reader) error {
 	}
 
 	cmd := apdu{instruction: insReset}
-	if _, err := ykTransmit(tx, cmd); err != nil {
-		return fmt.Errorf("reseting yubikey: %v", err)
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("reseting yubikey: %w", err)
 	}
 	return nil
 }
@@ -426,9 +377,9 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 			0x00, // Return encrypted random
 		},
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return fmt.Errorf("get auth challenge: %v", err)
+		return fmt.Errorf("get auth challenge: %w", err)
 	}
 	if n := len(resp); n < 12 {
 		return fmt.Errorf("challenge didn't return enough bytes: %d", n)
@@ -477,9 +428,9 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 		param2:      keyCardManagement,
 		data:        data,
 	}
-	resp, err = ykTransmit(tx, cmd)
+	resp, err = tx.Transmit(cmd)
 	if err != nil {
-		return fmt.Errorf("auth challenge: %v", err)
+		return fmt.Errorf("auth challenge: %w", err)
 	}
 	if n := len(resp); n < 12 {
 		return fmt.Errorf("challenge response didn't return enough bytes: %d", n)
@@ -520,7 +471,7 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
 	defer tx.Close()
 
 	if err := ykAuthenticate(tx, oldKey, yk.rand); err != nil {
-		return fmt.Errorf("authenticating with old key: %v", err)
+		return fmt.Errorf("authenticating with old key: %w", err)
 	}
 	if err := ykSetManagementKey(tx, newKey, false); err != nil {
 		return err
@@ -542,8 +493,8 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 	if touch {
 		cmd.param2 = 0xfe
 	}
-	if _, err := ykTransmit(tx, cmd); err != nil {
-		return fmt.Errorf("command failed: %v", err)
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
 }
@@ -587,7 +538,7 @@ func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
 		param2:      0x80,
 		data:        append(oldPINData, newPINData...),
 	}
-	_, err = ykTransmit(tx, cmd)
+	_, err = tx.Transmit(cmd)
 	return err
 }
 
@@ -615,7 +566,7 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 		param2:      0x80,
 		data:        append(pukData, newPINData...),
 	}
-	_, err = ykTransmit(tx, cmd)
+	_, err = tx.Transmit(cmd)
 	return err
 }
 
@@ -658,7 +609,7 @@ func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
 		param2:      0x81,
 		data:        append(oldPUKData, newPUKData...),
 	}
-	_, err = ykTransmit(tx, cmd)
+	_, err = tx.Transmit(cmd)
 	return err
 }
 
@@ -668,8 +619,8 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 		param1:      0x04,
 		data:        id[:],
 	}
-	if _, err := ykTransmit(tx, cmd); err != nil {
-		return fmt.Errorf("command failed: %v", err)
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
 }
@@ -678,9 +629,9 @@ func ykVersion(tx *scTx) (*version, error) {
 	cmd := apdu{
 		instruction: insGetVersion,
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %v", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 	if n := len(resp); n < 3 {
 		return nil, fmt.Errorf("response was too short: %d", n)
@@ -694,14 +645,14 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 		// Earlier versions of YubiKeys required using the yubikey applet to get
 		// the serial number. Newer ones have this built into the PIV applet.
 		if err := ykSelectApplication(tx, aidYubiKey[:]); err != nil {
-			return 0, fmt.Errorf("selecting yubikey applet: %v", err)
+			return 0, fmt.Errorf("selecting yubikey applet: %w", err)
 		}
 		defer ykSelectApplication(tx, aidPIV[:])
 		cmd = apdu{instruction: 0x01, param1: 0x10}
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return 0, fmt.Errorf("smart card command: %v", err)
+		return 0, fmt.Errorf("smart card command: %w", err)
 	}
 	if n := len(resp); n != 4 {
 		return 0, fmt.Errorf("expected 4 byte serial number, got %d", n)
@@ -720,8 +671,8 @@ func ykChangeManagementKey(tx *scTx, key [24]byte) error {
 			alg3DES, keyCardManagement, 24,
 		}, key[:]...),
 	}
-	if _, err := ykTransmit(tx, cmd); err != nil {
-		return fmt.Errorf("command failed: %v", err)
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
 }
@@ -760,12 +711,7 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 	defer tx.Close()
 	m, err := ykGetProtectedMetadata(tx, pin)
 	if err != nil {
-		var e *apduErr
-		if !errors.As(err, &e) {
-			return nil, err
-		}
-		if e.sw1 == 0x6a && e.sw2 == 0x82 {
-			// Error code indicating the object wasn't found.
+		if errors.Is(err, ErrNotFound) {
 			return &Metadata{}, nil
 		}
 		return nil, err
@@ -884,7 +830,7 @@ func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
 	// NOTE: for some reason this action requires the PIN to be authenticated on
 	// the same transaction. It doesn't work otherwise.
 	if err := ykLogin(tx, pin); err != nil {
-		return nil, fmt.Errorf("authenticating with pin: %v", err)
+		return nil, fmt.Errorf("authenticating with pin: %w", err)
 	}
 	cmd := apdu{
 		instruction: insGetData,
@@ -898,7 +844,7 @@ func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
 			0x09,
 		},
 	}
-	resp, err := ykTransmit(tx, cmd)
+	resp, err := tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -934,10 +880,10 @@ func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
 	// NOTE: for some reason this action requires the management key authenticated
 	// on the same transaction. It doesn't work otherwise.
 	if err := ykAuthenticate(tx, key, rand.Reader); err != nil {
-		return fmt.Errorf("authenticating with key: %v", err)
+		return fmt.Errorf("authenticating with key: %w", err)
 	}
-	if _, err := ykTransmit(tx, cmd); err != nil {
-		return fmt.Errorf("command failed: %v", err)
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
 }

@@ -169,7 +169,7 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 		if err == nil {
 			t.Fatalf("login with bad pin succeeded")
 		}
-		var e *errWrongPIN
+		var e AuthErr
 		if !errors.As(err, &e) {
 			t.Fatalf("error returned was not a wrong pin error: %v", err)
 		}
