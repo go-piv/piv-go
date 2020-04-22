@@ -25,7 +25,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -451,5 +453,46 @@ func TestYubiKeyPrivateKey(t *testing.T) {
 	}
 	if !ecdsa.Verify(ecdsaPub, hash, ecdsaSignature.R, ecdsaSignature.S) {
 		t.Fatalf("signature validation failed")
+	}
+}
+
+func TestYubiKeyPrivateKeyPINError(t *testing.T) {
+	alg := AlgorithmEC256
+	slot := SlotAuthentication
+
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	key := Key{
+		Algorithm:   alg,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pub, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+
+	auth := KeyAuth{
+		PINPrompt: func() (string, error) {
+			return "", errors.New("test error")
+		},
+	}
+
+	priv, err := yk.PrivateKey(slot, pub, auth)
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	signer, ok := priv.(crypto.Signer)
+	if !ok {
+		t.Fatalf("private key doesn't implement crypto.Signer")
+	}
+
+	b := sha256.Sum256([]byte("hello"))
+	hash := b[:]
+	sig, err := signer.Sign(rand.Reader, hash, crypto.SHA256)
+	if err == nil || !strings.Contains(err.Error(), "test error") {
+		t.Errorf("PINPrompt error should be propagated, got sig=%v err=%v", sig, err)
+		// and should not crash
 	}
 }
