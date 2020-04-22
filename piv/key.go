@@ -537,6 +537,7 @@ func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
 	defer func() {
 		if err != nil {
 			tx.Close()
+			tx = nil
 		}
 	}()
 
@@ -544,15 +545,15 @@ func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
 	// attempting to sign, then prompting on specific apdu error codes.
 	if k.PIN != "" {
 		if err := ykLogin(tx, k.PIN); err != nil {
-			return nil, fmt.Errorf("authenticating with pin: %v", err)
+			return tx, fmt.Errorf("authenticating with pin: %w", err)
 		}
 	} else if k.PINPrompt != nil {
 		pin, err := k.PINPrompt()
 		if err != nil {
-			return nil, fmt.Errorf("pin prompt: %v", err)
+			return tx, fmt.Errorf("pin prompt: %v", err)
 		}
 		if err := ykLogin(tx, pin); err != nil {
-			return nil, fmt.Errorf("authenticating with pin: %v", err)
+			return tx, fmt.Errorf("authenticating with pin: %w", err)
 		}
 	}
 	return tx, nil
