@@ -80,6 +80,12 @@ func TestYubiKeySignECDSA(t *testing.T) {
 }
 
 func TestSlots(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	if err := yk.Reset(); err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+	close()
+
 	tests := []struct {
 		name string
 		slot Slot
@@ -124,6 +130,10 @@ func TestSlots(t *testing.T) {
 			cert, err := x509.ParseCertificate(raw)
 			if err != nil {
 				t.Fatalf("parse certificate: %v", err)
+			}
+
+			if _, err := yk.Certificate(test.slot); err == nil || !errors.Is(err, ErrNotFound) {
+				t.Errorf("get certificate, got err=%v, want=ErrNotFound", err)
 			}
 			if err := yk.SetCertificate(DefaultManagementKey, test.slot, cert); err != nil {
 				t.Fatalf("set certificate: %v", err)
