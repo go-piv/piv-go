@@ -27,7 +27,6 @@ import (
 	"encoding/asn1"
 	"errors"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +71,52 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	}
 	if !ecdsa.Verify(pub, data[:], sig.R, sig.S) {
 		t.Errorf("signature didn't match")
+	}
+}
+
+func TestPINPrompt(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	if err := yk.Reset(); err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+	close()
+
+	yk, close = newTestYubiKey(t)
+	defer close()
+
+	k := Key{
+		Algorithm:   AlgorithmEC256,
+		PINPolicy:   PINPolicyOnce,
+		TouchPolicy: TouchPolicyNever,
+	}
+	pub, err := yk.GenerateKey(DefaultManagementKey, SlotAuthentication, k)
+	if err != nil {
+		t.Fatalf("generating key on slot: %v", err)
+	}
+	n := 0
+	auth := KeyAuth{
+		PINPrompt: func() (string, error) {
+			n++
+			return DefaultPIN, nil
+		},
+	}
+	priv, err := yk.PrivateKey(SlotAuthentication, pub, auth)
+	if err != nil {
+		t.Fatalf("building private key: %v", err)
+	}
+	s, ok := priv.(crypto.Signer)
+	if !ok {
+		t.Fatalf("expected crypto.Signer got %T", priv)
+	}
+	data := sha256.Sum256([]byte("foo"))
+	if _, err := s.Sign(rand.Reader, data[:], crypto.SHA256); err != nil {
+		t.Errorf("signing error: %v", err)
+	}
+	if _, err := s.Sign(rand.Reader, data[:], crypto.SHA256); err != nil {
+		t.Errorf("signing error: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected PINPrompt to only be called once got: %d", n)
 	}
 }
 
@@ -488,9 +533,7 @@ func TestYubiKeyPrivateKeyPINError(t *testing.T) {
 
 	b := sha256.Sum256([]byte("hello"))
 	hash := b[:]
-	sig, err := signer.Sign(rand.Reader, hash, crypto.SHA256)
-	if err == nil || !strings.Contains(err.Error(), "test error") {
-		t.Errorf("PINPrompt error should be propagated, got sig=%v err=%v", sig, err)
-		// and should not crash
+	if _, err := signer.Sign(rand.Reader, hash, crypto.SHA256); err != nil {
+		t.Errorf("expected sign to fail with pin prompt that returned error")
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -501,27 +502,44 @@ type KeyAuth struct {
 	// PIN, if provided, is a static PIN used to authenticate against the key.
 	// If provided, PINPrompt is ignored.
 	PIN string
-	// PINPrompt should be used to interactively request the PIN from the user.
+	// PINPrompt can be used to interactively request the PIN from the user. The
+	// method is only called when needed. For example, if a key specifies
+	// PINPromptOnce, PINPrompt will only be called once per YubiKey struct.
 	PINPrompt func() (pin string, err error)
 }
 
-func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
-	// TODO(ericchiang): support cached pin and touch policies, possibly by
-	// attempting to sign, then prompting on specific apdu error codes.
-	if k.PIN != "" {
-		if err := ykLogin(yk.tx, k.PIN); err != nil {
-			return tx, fmt.Errorf("authenticating with pin: %w", err)
-		}
-	} else if k.PINPrompt != nil {
-		pin, err := k.PINPrompt()
-		if err != nil {
-			return tx, fmt.Errorf("pin prompt: %v", err)
-		}
-		if err := ykLogin(yk.tx, pin); err != nil {
-			return tx, fmt.Errorf("authenticating with pin: %w", err)
-		}
+func isAuthErr(err error) bool {
+	var e *apduErr
+	if !errors.As(err, &e) {
+		return false
 	}
-	return yk.tx, nil
+	return e.sw1 == 0x69 && e.sw2 == 0x82 // "security status not satisfied"
+}
+
+func (k KeyAuth) do(yk *YubiKey, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
+	data, err := f(yk.tx)
+	if err == nil {
+		return data, nil
+	}
+	if !isAuthErr(err) {
+		return nil, err
+	}
+
+	pin := k.PIN
+	if pin == "" && k.PINPrompt != nil {
+		p, err := k.PINPrompt()
+		if err != nil {
+			return nil, fmt.Errorf("pin prompt: %v", err)
+		}
+		pin = p
+	}
+	if pin == "" {
+		return nil, err
+	}
+	if err := ykLogin(yk.tx, pin); err != nil {
+		return nil, err
+	}
+	return f(yk.tx)
 }
 
 // PrivateKey is used to access signing and decryption options for the key
@@ -560,12 +578,9 @@ func (k *keyECDSA) Public() crypto.PublicKey {
 }
 
 func (k *keyECDSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	tx, err := k.auth.begin(k.yk)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	return ykSignECDSA(tx, k.slot, k.pub, digest)
+	return k.auth.do(k.yk, func(tx *scTx) ([]byte, error) {
+		return ykSignECDSA(tx, k.slot, k.pub, digest)
+	})
 }
 
 type keyRSA struct {
@@ -580,21 +595,15 @@ func (k *keyRSA) Public() crypto.PublicKey {
 }
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	tx, err := k.auth.begin(k.yk)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	return ykSignRSA(tx, k.slot, k.pub, digest, opts)
+	return k.auth.do(k.yk, func(tx *scTx) ([]byte, error) {
+		return ykSignRSA(tx, k.slot, k.pub, digest, opts)
+	})
 }
 
 func (k *keyRSA) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
-	tx, err := k.auth.begin(k.yk)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	return ykDecryptRSA(tx, k.slot, k.pub, msg)
+	return k.auth.do(k.yk, func(tx *scTx) ([]byte, error) {
+		return ykDecryptRSA(tx, k.slot, k.pub, msg)
+	})
 }
 
 func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]byte, error) {
