@@ -92,10 +92,14 @@ const (
 	insGetSerial     = 0xf8
 )
 
-// YubiKey is an open connection to a YubiKey smart card.
+// YubiKey is an exclusive open connection to a YubiKey smart card. While open,
+// no other process can query the given card.
+//
+// To release the connection, call the Close method.
 type YubiKey struct {
 	ctx *scContext
 	h   *scHandle
+	tx  *scTx
 
 	rand io.Reader
 
@@ -152,14 +156,17 @@ func (c *client) Open(card string) (*YubiKey, error) {
 		ctx.Close()
 		return nil, fmt.Errorf("connecting to smart card: %w", err)
 	}
-
-	yk := &YubiKey{ctx: ctx, h: h}
-	tx, err := yk.begin()
+	tx, err := h.Begin()
 	if err != nil {
-		yk.Close()
-		return nil, fmt.Errorf("initializing yubikey: %w", err)
+		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
 	}
-	v, err := ykVersion(tx)
+	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
+		tx.Close()
+		return nil, fmt.Errorf("selecting piv applet: %w", err)
+	}
+
+	yk := &YubiKey{ctx: ctx, h: h, tx: tx}
+	v, err := ykVersion(yk.tx)
 	if err != nil {
 		yk.Close()
 		return nil, fmt.Errorf("getting yubikey version: %w", err)
@@ -173,26 +180,9 @@ func (c *client) Open(card string) (*YubiKey, error) {
 	return yk, nil
 }
 
-func (yk *YubiKey) begin() (*scTx, error) {
-	tx, err := yk.h.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
-	}
-	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
-		tx.Close()
-		return nil, fmt.Errorf("selecting piv applet: %w", err)
-	}
-	return tx, nil
-}
-
 // Serial returns the YubiKey's serial number.
 func (yk *YubiKey) Serial() (uint32, error) {
-	tx, err := yk.begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Close()
-	return ykSerial(tx, yk.version)
+	return ykSerial(yk.tx, yk.version)
 }
 
 func encodePIN(pin string) ([]byte, error) {
@@ -219,12 +209,7 @@ func encodePIN(pin string) ([]byte, error) {
 //
 // Use DefaultPIN if the PIN hasn't been set.
 func (yk *YubiKey) authPIN(pin string) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykLogin(tx, pin)
+	return ykLogin(yk.tx, pin)
 }
 
 func ykLogin(tx *scTx, pin string) error {
@@ -242,12 +227,7 @@ func ykLogin(tx *scTx, pin string) error {
 
 // Retries returns the number of attempts remaining to enter the correct PIN.
 func (yk *YubiKey) Retries() (int, error) {
-	tx, err := yk.begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Close()
-	return ykPINRetries(tx)
+	return ykPINRetries(yk.tx)
 }
 
 func ykPINRetries(tx *scTx) (int, error) {
@@ -267,12 +247,7 @@ func ykPINRetries(tx *scTx) (int, error) {
 // and resetting the PIN, PUK, and Management Key to their default values. This
 // does NOT affect data on other applets, such as GPG or U2F.
 func (yk *YubiKey) Reset() error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykReset(tx, yk.rand)
+	return ykReset(yk.tx, yk.rand)
 }
 
 func ykReset(tx *scTx, r io.Reader) error {
@@ -341,12 +316,7 @@ type version struct {
 //
 // Use DefaultManagementKey if the management key hasn't been set.
 func (yk *YubiKey) authManagementKey(key [24]byte) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykAuthenticate(tx, key, yk.rand)
+	return ykAuthenticate(yk.tx, key, yk.rand)
 }
 
 var (
@@ -464,16 +434,10 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 //
 //
 func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-
-	if err := ykAuthenticate(tx, oldKey, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, oldKey, yk.rand); err != nil {
 		return fmt.Errorf("authenticating with old key: %w", err)
 	}
-	if err := ykSetManagementKey(tx, newKey, false); err != nil {
+	if err := ykSetManagementKey(yk.tx, newKey, false); err != nil {
 		return err
 	}
 	return nil
@@ -516,12 +480,7 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 //		}
 //
 func (yk *YubiKey) SetPIN(oldPIN, newPIN string) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykChangePIN(tx, oldPIN, newPIN)
+	return ykChangePIN(yk.tx, oldPIN, newPIN)
 }
 
 func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
@@ -544,12 +503,7 @@ func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
 
 // Unblock unblocks the PIN, setting it to a new value.
 func (yk *YubiKey) Unblock(puk, newPIN string) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykUnblockPIN(tx, puk, newPIN)
+	return ykUnblockPIN(yk.tx, puk, newPIN)
 }
 
 func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
@@ -587,12 +541,7 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 //		}
 //
 func (yk *YubiKey) SetPUK(oldPUK, newPUK string) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykChangePUK(tx, oldPUK, newPUK)
+	return ykChangePUK(yk.tx, oldPUK, newPUK)
 }
 
 func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
@@ -704,12 +653,7 @@ func unmarshalDERField(b []byte, tag uint64) (obj []byte, err error) {
 // Metadata returns protected data stored on the card. This can be used to
 // retrieve PIN protected management keys.
 func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
-	tx, err := yk.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	m, err := ykGetProtectedMetadata(tx, pin)
+	m, err := ykGetProtectedMetadata(yk.tx, pin)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return &Metadata{}, nil
@@ -723,12 +667,7 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 // store the management key on the smart card instead of managing the PIN and
 // management key seperately.
 func (yk *YubiKey) SetMetadata(key [24]byte, m *Metadata) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	return ykSetProtectedMetadata(tx, key, m)
+	return ykSetProtectedMetadata(yk.tx, key, m)
 }
 
 // Metadata holds protected metadata. This is primarily used by YubiKey manager

@@ -157,15 +157,9 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin transaction: %v", err)
-	}
-	defer tx.Close()
-
 	badPIN := "0"
 	for {
-		err := ykLogin(tx, badPIN)
+		err := ykLogin(yk.tx, badPIN)
 		if err == nil {
 			t.Fatalf("login with bad pin succeeded")
 		}
@@ -178,10 +172,10 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 		}
 	}
 
-	if err := ykUnblockPIN(tx, DefaultPUK, DefaultPIN); err != nil {
+	if err := yk.Unblock(DefaultPUK, DefaultPIN); err != nil {
 		t.Fatalf("unblocking pin: %v", err)
 	}
-	if err := ykLogin(tx, DefaultPIN); err != nil {
+	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
 		t.Errorf("failed to login with pin after unblock: %v", err)
 	}
 }

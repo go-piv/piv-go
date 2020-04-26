@@ -306,12 +306,7 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 // certificate. This can be used to prove a key was generate on a specific
 // YubiKey.
 func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
-	tx, err := yk.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	return ykAttest(tx, slot)
+	return ykAttest(yk.tx, slot)
 }
 
 func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
@@ -339,15 +334,6 @@ func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
 
 // Certificate returns the certifiate object stored in a given slot.
 func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
-	tx, err := yk.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	return ykGetCertificate(tx, slot)
-}
-
-func ykGetCertificate(tx *scTx, slot Slot) (*x509.Certificate, error) {
 	cmd := apdu{
 		instruction: insGetData,
 		param1:      0x3f,
@@ -360,7 +346,7 @@ func ykGetCertificate(tx *scTx, slot Slot) (*x509.Certificate, error) {
 			byte(slot.Object),
 		},
 	}
-	resp, err := tx.Transmit(cmd)
+	resp, err := yk.tx.Transmit(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -401,15 +387,10 @@ func marshalASN1(tag byte, data []byte) []byte {
 // certificate isn't required to use the associated key for signing or
 // decryption.
 func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificate) error {
-	tx, err := yk.begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Close()
-	if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
-	return ykStoreCertificate(tx, slot, cert)
+	return ykStoreCertificate(yk.tx, slot, cert)
 }
 
 func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
@@ -455,15 +436,10 @@ type Key struct {
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
 func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
-	tx, err := yk.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Close()
-	if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
 		return nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
-	return ykGenerateKey(tx, slot, opts)
+	return ykGenerateKey(yk.tx, slot, opts)
 }
 
 func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
@@ -530,21 +506,10 @@ type KeyAuth struct {
 }
 
 func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
-	tx, err = yk.begin()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err != nil {
-			tx.Close()
-			tx = nil
-		}
-	}()
-
 	// TODO(ericchiang): support cached pin and touch policies, possibly by
 	// attempting to sign, then prompting on specific apdu error codes.
 	if k.PIN != "" {
-		if err := ykLogin(tx, k.PIN); err != nil {
+		if err := ykLogin(yk.tx, k.PIN); err != nil {
 			return tx, fmt.Errorf("authenticating with pin: %w", err)
 		}
 	} else if k.PINPrompt != nil {
@@ -552,11 +517,11 @@ func (k KeyAuth) begin(yk *YubiKey) (tx *scTx, err error) {
 		if err != nil {
 			return tx, fmt.Errorf("pin prompt: %v", err)
 		}
-		if err := ykLogin(tx, pin); err != nil {
+		if err := ykLogin(yk.tx, pin); err != nil {
 			return tx, fmt.Errorf("authenticating with pin: %w", err)
 		}
 	}
-	return tx, nil
+	return yk.tx, nil
 }
 
 // PrivateKey is used to access signing and decryption options for the key
