@@ -75,48 +75,55 @@ func TestYubiKeySignECDSA(t *testing.T) {
 }
 
 func TestPINPrompt(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	if err := yk.Reset(); err != nil {
-		t.Fatalf("resetting yubikey: %v", err)
+	tests := []struct {
+		name   string
+		policy PINPolicy
+		want   int
+	}{
+		{"Never", PINPolicyNever, 0},
+		{"Once", PINPolicyOnce, 1},
+		{"Always", PINPolicyAlways, 2},
 	}
-	close()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			yk, close := newTestYubiKey(t)
+			defer close()
 
-	yk, close = newTestYubiKey(t)
-	defer close()
-
-	k := Key{
-		Algorithm:   AlgorithmEC256,
-		PINPolicy:   PINPolicyOnce,
-		TouchPolicy: TouchPolicyNever,
-	}
-	pub, err := yk.GenerateKey(DefaultManagementKey, SlotAuthentication, k)
-	if err != nil {
-		t.Fatalf("generating key on slot: %v", err)
-	}
-	n := 0
-	auth := KeyAuth{
-		PINPrompt: func() (string, error) {
-			n++
-			return DefaultPIN, nil
-		},
-	}
-	priv, err := yk.PrivateKey(SlotAuthentication, pub, auth)
-	if err != nil {
-		t.Fatalf("building private key: %v", err)
-	}
-	s, ok := priv.(crypto.Signer)
-	if !ok {
-		t.Fatalf("expected crypto.Signer got %T", priv)
-	}
-	data := sha256.Sum256([]byte("foo"))
-	if _, err := s.Sign(rand.Reader, data[:], crypto.SHA256); err != nil {
-		t.Errorf("signing error: %v", err)
-	}
-	if _, err := s.Sign(rand.Reader, data[:], crypto.SHA256); err != nil {
-		t.Errorf("signing error: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("expected PINPrompt to only be called once got: %d", n)
+			k := Key{
+				Algorithm:   AlgorithmEC256,
+				PINPolicy:   test.policy,
+				TouchPolicy: TouchPolicyNever,
+			}
+			pub, err := yk.GenerateKey(DefaultManagementKey, SlotAuthentication, k)
+			if err != nil {
+				t.Fatalf("generating key on slot: %v", err)
+			}
+			got := 0
+			auth := KeyAuth{
+				PINPrompt: func() (string, error) {
+					got++
+					return DefaultPIN, nil
+				},
+			}
+			priv, err := yk.PrivateKey(SlotAuthentication, pub, auth)
+			if err != nil {
+				t.Fatalf("building private key: %v", err)
+			}
+			s, ok := priv.(crypto.Signer)
+			if !ok {
+				t.Fatalf("expected crypto.Signer got %T", priv)
+			}
+			data := sha256.Sum256([]byte("foo"))
+			if _, err := s.Sign(rand.Reader, data[:], crypto.SHA256); err != nil {
+				t.Errorf("signing error: %v", err)
+			}
+			if _, err := s.Sign(rand.Reader, data[:], crypto.SHA256); err != nil {
+				t.Errorf("signing error: %v", err)
+			}
+			if got != test.want {
+				t.Errorf("PINPrompt called %d times, want=%d", got, test.want)
+			}
+		})
 	}
 }
 
