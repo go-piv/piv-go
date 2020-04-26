@@ -524,7 +524,7 @@ func TestYubiKeyPrivateKeyPINError(t *testing.T) {
 	key := Key{
 		Algorithm:   alg,
 		TouchPolicy: TouchPolicyNever,
-		PINPolicy:   PINPolicyNever,
+		PINPolicy:   PINPolicyAlways,
 	}
 	pub, err := yk.GenerateKey(DefaultManagementKey, slot, key)
 	if err != nil {
@@ -548,7 +548,7 @@ func TestYubiKeyPrivateKeyPINError(t *testing.T) {
 
 	b := sha256.Sum256([]byte("hello"))
 	hash := b[:]
-	if _, err := signer.Sign(rand.Reader, hash, crypto.SHA256); err != nil {
+	if _, err := signer.Sign(rand.Reader, hash, crypto.SHA256); err == nil {
 		t.Errorf("expected sign to fail with pin prompt that returned error")
 	}
 }
