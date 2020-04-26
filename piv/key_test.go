@@ -35,26 +35,15 @@ import (
 func TestYubiKeySignECDSA(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
-	tx, err := yk.begin()
-	if err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	defer tx.Close()
 
 	slot := SlotAuthentication
 
-	if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
-		t.Fatalf("authenticating: %v", err)
-	}
-	if err := ykLogin(tx, DefaultPIN); err != nil {
-		t.Fatalf("logging in: %v", err)
-	}
 	key := Key{
 		Algorithm:   AlgorithmEC256,
 		TouchPolicy: TouchPolicyNever,
 		PINPolicy:   PINPolicyNever,
 	}
-	pubKey, err := ykGenerateKey(tx, slot, key)
+	pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
 	if err != nil {
 		t.Fatalf("generating key: %v", err)
 	}
@@ -63,8 +52,15 @@ func TestYubiKeySignECDSA(t *testing.T) {
 		t.Fatalf("public key is not an ecdsa key")
 	}
 	data := sha256.Sum256([]byte("hello"))
-
-	out, err := ykSignECDSA(tx, slot, pub, data[:])
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	s, ok := priv.(crypto.Signer)
+	if !ok {
+		t.Fatalf("expected private key to implement crypto.Signer")
+	}
+	out, err := s.Sign(rand.Reader, data[:], crypto.SHA256)
 	if err != nil {
 		t.Fatalf("signing failed: %v", err)
 	}
@@ -165,26 +161,13 @@ func TestYubiKeySignRSA(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
-			tx, err := yk.begin()
-			if err != nil {
-				t.Fatalf("begin: %v", err)
-			}
-			defer tx.Close()
-
 			slot := SlotAuthentication
-
-			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
-				t.Fatalf("authenticating: %v", err)
-			}
-			if err := ykLogin(tx, DefaultPIN); err != nil {
-				t.Fatalf("logging in: %v", err)
-			}
 			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
 				PINPolicy:   PINPolicyNever,
 			}
-			pubKey, err := ykGenerateKey(tx, slot, key)
+			pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
 			if err != nil {
 				t.Fatalf("generating key: %v", err)
 			}
@@ -193,8 +176,15 @@ func TestYubiKeySignRSA(t *testing.T) {
 				t.Fatalf("public key is not an rsa key")
 			}
 			data := sha256.Sum256([]byte("hello"))
-
-			out, err := ykSignRSA(tx, slot, pub, data[:], crypto.SHA256)
+			priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+			if err != nil {
+				t.Fatalf("getting private key: %v", err)
+			}
+			s, ok := priv.(crypto.Signer)
+			if !ok {
+				t.Fatalf("private key didn't implement crypto.Signer")
+			}
+			out, err := s.Sign(rand.Reader, data[:], crypto.SHA256)
 			if err != nil {
 				t.Fatalf("signing failed: %v", err)
 			}
@@ -221,23 +211,13 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
-			tx, err := yk.begin()
-			if err != nil {
-				t.Fatalf("begin: %v", err)
-			}
-			defer tx.Close()
-
 			slot := SlotAuthentication
-
-			if err := ykAuthenticate(tx, DefaultManagementKey, rand.Reader); err != nil {
-				t.Fatalf("authenticating: %v", err)
-			}
 			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
 				PINPolicy:   PINPolicyNever,
 			}
-			pubKey, err := ykGenerateKey(tx, slot, key)
+			pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
 			if err != nil {
 				t.Fatalf("generating key: %v", err)
 			}
@@ -252,7 +232,15 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 				t.Fatalf("encryption failed: %v", err)
 			}
 
-			got, err := ykDecryptRSA(tx, slot, pub, ct)
+			priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+			if err != nil {
+				t.Fatalf("getting private key: %v", err)
+			}
+			d, ok := priv.(crypto.Decrypter)
+			if !ok {
+				t.Fatalf("private key didn't implement crypto.Decypter")
+			}
+			got, err := d.Decrypt(rand.Reader, ct, nil)
 			if err != nil {
 				t.Fatalf("decryption failed: %v", err)
 			}
