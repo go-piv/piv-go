@@ -534,27 +534,21 @@ func isAuthErr(err error) bool {
 }
 
 func (k KeyAuth) do(yk *YubiKey, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
-	data, err := f(yk.tx)
-	if err == nil {
-		return data, nil
-	}
-	if !isAuthErr(err) {
-		return nil, err
-	}
-
-	pin := k.PIN
-	if pin == "" && k.PINPrompt != nil {
-		p, err := k.PINPrompt()
-		if err != nil {
-			return nil, fmt.Errorf("pin prompt: %v", err)
+	if ykLoginNeeded(yk.tx) {
+		pin := k.PIN
+		if pin == "" && k.PINPrompt != nil {
+			p, err := k.PINPrompt()
+			if err != nil {
+				return nil, fmt.Errorf("pin prompt: %v", err)
+			}
+			pin = p
 		}
-		pin = p
-	}
-	if pin == "" {
-		return nil, err
-	}
-	if err := ykLogin(yk.tx, pin); err != nil {
-		return nil, err
+		if pin != "" {
+			if err := ykLogin(yk.tx, pin); err != nil {
+				return nil, err
+			}
+		}
+		// If PIN isn't provided, assume this is for a PINPolicyNever key.
 	}
 	return f(yk.tx)
 }

@@ -225,6 +225,12 @@ func ykLogin(tx *scTx, pin string) error {
 	return nil
 }
 
+func ykLoginNeeded(tx *scTx) bool {
+	cmd := apdu{instruction: insVerify, param2: 0x80}
+	_, err := tx.Transmit(cmd)
+	return err != nil
+}
+
 // Retries returns the number of attempts remaining to enter the correct PIN.
 func (yk *YubiKey) Retries() (int, error) {
 	return ykPINRetries(yk.tx)

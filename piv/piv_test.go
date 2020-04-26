@@ -89,6 +89,20 @@ func TestYubiKeySerial(t *testing.T) {
 	}
 }
 
+func TestYubiKeyLoginNeeded(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+	if !ykLoginNeeded(yk.tx) {
+		t.Errorf("expected login needed")
+	}
+	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if ykLoginNeeded(yk.tx) {
+		t.Errorf("expected no login needed")
+	}
+}
+
 func TestYubiKeyPINRetries(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
