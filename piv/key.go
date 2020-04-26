@@ -180,6 +180,10 @@ func (v *verifier) Verify(attestationCert, slotCert *x509.Certificate) (*Attesta
 	if err := verifySignature(attestationCert, slotCert); err != nil {
 		return nil, fmt.Errorf("slot certificate not signed by attestation certifcate: %v", err)
 	}
+	return parseAttestation(slotCert)
+}
+
+func parseAttestation(slotCert *x509.Certificate) (*Attestation, error) {
 	var a Attestation
 	for _, ext := range slotCert.Extensions {
 		if err := a.addExt(ext); err != nil {
@@ -533,22 +537,36 @@ func isAuthErr(err error) bool {
 	return e.sw1 == 0x69 && e.sw2 == 0x82 // "security status not satisfied"
 }
 
-func (k KeyAuth) do(yk *YubiKey, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
-	if ykLoginNeeded(yk.tx) {
-		pin := k.PIN
-		if pin == "" && k.PINPrompt != nil {
-			p, err := k.PINPrompt()
-			if err != nil {
-				return nil, fmt.Errorf("pin prompt: %v", err)
-			}
-			pin = p
+func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
+	// PINPolicyNever shouldn't require a PIN.
+	if pp == PINPolicyNever {
+		return nil
+	}
+
+	// PINPolicyAlways should always prompt a PIN even if the key says that
+	// login isn't needed.
+	// https://github.com/go-piv/piv-go/issues/49
+	if pp != PINPolicyAlways && !ykLoginNeeded(yk.tx) {
+		return nil
+	}
+
+	pin := k.PIN
+	if pin == "" && k.PINPrompt != nil {
+		p, err := k.PINPrompt()
+		if err != nil {
+			return fmt.Errorf("pin prompt: %v", err)
 		}
-		if pin != "" {
-			if err := ykLogin(yk.tx, pin); err != nil {
-				return nil, err
-			}
-		}
-		// If PIN isn't provided, assume this is for a PINPolicyNever key.
+		pin = p
+	}
+	if pin == "" {
+		return fmt.Errorf("pin required but wasn't provided")
+	}
+	return ykLogin(yk.tx, pin)
+}
+
+func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
+	if err := k.authTx(yk, pp); err != nil {
+		return nil, err
 	}
 	return f(yk.tx)
 }
@@ -567,11 +585,28 @@ func (k KeyAuth) do(yk *YubiKey, f func(tx *scTx) ([]byte, error)) ([]byte, erro
 //		priv, err := yk.PrivateKey(slot, cert.PublicKey, auth)
 //
 func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) (crypto.PrivateKey, error) {
+	pp := PINPolicyNever
+	if auth.PIN != "" || auth.PINPrompt != nil {
+		// Attempt to determine the key's PIN policy. This helps inform the
+		// strategy for when to prompt for a PIN.
+		cert, err := yk.Attest(slot)
+		if err != nil {
+			return nil, fmt.Errorf("get attestation cert: %v", err)
+		}
+		a, err := parseAttestation(cert)
+		if err != nil {
+			return nil, fmt.Errorf("parse attestation cert: %v", err)
+		}
+		if _, ok := pinPolicyMap[a.PINPolicy]; ok {
+			pp = a.PINPolicy
+		}
+	}
+
 	switch pub := public.(type) {
 	case *ecdsa.PublicKey:
-		return &keyECDSA{yk, slot, pub, auth}, nil
+		return &keyECDSA{yk, slot, pub, auth, pp}, nil
 	case *rsa.PublicKey:
-		return &keyRSA{yk, slot, pub, auth}, nil
+		return &keyRSA{yk, slot, pub, auth, pp}, nil
 	default:
 		return nil, fmt.Errorf("unsupported public key type: %T", public)
 	}
@@ -582,6 +617,7 @@ type keyECDSA struct {
 	slot Slot
 	pub  *ecdsa.PublicKey
 	auth KeyAuth
+	pp   PINPolicy
 }
 
 func (k *keyECDSA) Public() crypto.PublicKey {
@@ -589,7 +625,7 @@ func (k *keyECDSA) Public() crypto.PublicKey {
 }
 
 func (k *keyECDSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return k.auth.do(k.yk, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykSignECDSA(tx, k.slot, k.pub, digest)
 	})
 }
@@ -599,6 +635,7 @@ type keyRSA struct {
 	slot Slot
 	pub  *rsa.PublicKey
 	auth KeyAuth
+	pp   PINPolicy
 }
 
 func (k *keyRSA) Public() crypto.PublicKey {
@@ -606,13 +643,13 @@ func (k *keyRSA) Public() crypto.PublicKey {
 }
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return k.auth.do(k.yk, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykSignRSA(tx, k.slot, k.pub, digest, opts)
 	})
 }
 
 func (k *keyRSA) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
-	return k.auth.do(k.yk, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykDecryptRSA(tx, k.slot, k.pub, msg)
 	})
 }
