@@ -307,6 +307,10 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 // certificate. This can be used to prove a key was generate on a specific
 // YubiKey.
 //
+// Certificates returned by this method MUST NOT be used for anything other than
+// attestion or determining the slots public key. For example, the certificate
+// is NOT suitable for TLS.
+//
 // If the slot doesn't have a key, the returned error wraps ErrNotFound.
 func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
 	cert, err := ykAttest(yk.tx, slot)
