@@ -142,6 +142,10 @@ func TestSlots(t *testing.T) {
 			yk, close := newTestYubiKey(t)
 			defer close()
 
+			if _, err := yk.Attest(test.slot); err == nil || !errors.Is(err, ErrNotFound) {
+				t.Errorf("attest: got err=%v, want=ErrNotFound", err)
+			}
+
 			k := Key{
 				Algorithm:   AlgorithmEC256,
 				PINPolicy:   PINPolicyNever,
@@ -151,6 +155,10 @@ func TestSlots(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generating key on slot: %v", err)
 			}
+			if _, err := yk.Attest(test.slot); err != nil {
+				t.Errorf("attest: %v", err)
+			}
+
 			priv, err := yk.PrivateKey(test.slot, pub, KeyAuth{PIN: DefaultPIN})
 			if err != nil {
 				t.Fatalf("private key: %v", err)

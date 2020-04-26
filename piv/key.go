@@ -306,8 +306,18 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 // Attest generates a certificate for a key, signed by the YubiKey's attestation
 // certificate. This can be used to prove a key was generate on a specific
 // YubiKey.
+//
+// If the slot doesn't have a key, the returned error wraps ErrNotFound.
 func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
-	return ykAttest(yk.tx, slot)
+	cert, err := ykAttest(yk.tx, slot)
+	if err == nil {
+		return cert, nil
+	}
+	var e *apduErr
+	if errors.As(err, &e) && e.sw1 == 0x6A && e.sw2 == 0x80 {
+		return nil, ErrNotFound
+	}
+	return nil, err
 }
 
 func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
@@ -334,6 +344,9 @@ func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
 }
 
 // Certificate returns the certifiate object stored in a given slot.
+//
+// If a certificate hasn't been set in the provided slot, the returned error
+// wraps ErrNotFound.
 func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
 	cmd := apdu{
 		instruction: insGetData,
