@@ -18,13 +18,11 @@ import "C"
 
 // Return codes for PCSC are different on different platforms (int vs. long).
 
-type pcscRC C.long
-
 func scCheck(rc C.long) error {
 	if rc == rcSuccess {
 		return nil
 	}
-	return &scErr{pcscRC(rc)}
+	return &scErr{int64(rc)}
 }
 
 func isRCNoReaders(rc C.long) bool {

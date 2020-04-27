@@ -102,8 +102,16 @@ func TestMultipleConnections(t *testing.T) {
 			}
 		}()
 
-		if _, err := Open(card); err == nil {
-			t.Errorf("expected second open operation to fail")
+		_, oerr := Open(card)
+		if oerr == nil {
+			t.Fatalf("expected second open operation to fail")
+		}
+		var e *scErr
+		if !errors.As(oerr, &e) {
+			t.Fatalf("expected scErr, got %v", oerr)
+		}
+		if e.rc != 0x8010000B {
+			t.Fatalf("expected return code 0x8010000B, got 0x%x", e.rc)
 		}
 		return
 	}

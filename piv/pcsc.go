@@ -36,14 +36,11 @@ const rcSuccess = C.SCARD_S_SUCCESS
 
 type scErr struct {
 	// rc holds the return code for a given call.
-	//
-	// Return codes are different types between MacOS, Linux, and Windows (int
-	// vs. long). So pcscRC is defined in OS specific files.
-	rc pcscRC
+	rc int64
 }
 
 func (e *scErr) Error() string {
-	if msg, ok := pcscErrMsgs[int64(e.rc)]; ok {
+	if msg, ok := pcscErrMsgs[e.rc]; ok {
 		return msg
 	}
 	return fmt.Sprintf("unknown pcsc return code 0x%08x", e.rc)
