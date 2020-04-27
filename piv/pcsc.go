@@ -196,7 +196,7 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		activeProtocol C.DWORD
 	)
 	rc := C.SCardConnect(c.ctx, C.CString(reader),
-		C.SCARD_SHARE_SHARED, C.SCARD_PROTOCOL_T1,
+		C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
 		&handle, &activeProtocol)
 	if err := scCheck(rc); err != nil {
 		return nil, err
