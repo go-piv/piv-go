@@ -248,6 +248,17 @@ sudo yum config-manager --set-enabled PowerTools
 sudo yum install pcsc-lite-devel
 ```
 
+On Windows:
+
+No prerequisites are needed. The default driver by Microsoft supports all functionalities
+which get tested by unittests. However if you run into problems try the official
+[YubiKey Smart Card Minidriver](https://www.yubico.com/products/services-software/download/smart-card-drivers-tools/). Yubico states on their website the driver adds [_additional
+smart functionality_](https://www.yubico.com/authentication-standards/smart-card/).
+
+Please notice the following:
+
+>Windows support is best effort due to lack of test hardware. This means the maintainers will take patches for Windows, but if you encounter a bug or the build is broken, you may be asked to fix it.
+
 ## Testing
 
 Tests automatically find connected available YubiKeys, but won't modify the
