@@ -134,8 +134,7 @@ func TestPINPrompt(t *testing.T) {
 }
 
 func supportsAttestation(yk *YubiKey) bool {
-	v := yk.Version()
-	return !(v.Major < 4 || v.Minor < 3)
+	return supportsVersion(yk.Version(), 4, 3, 0)
 }
 
 func TestSlots(t *testing.T) {
