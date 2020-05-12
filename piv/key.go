@@ -260,6 +260,10 @@ const (
 type PINPolicy int
 
 // PIN policies supported by this package.
+//
+// BUG(ericchiang): Caching for PINPolicyOnce isn't supported on YubiKey
+// versions older than 4.3.0 due to issues with verifying if a PIN is needed.
+// If specified, a PIN will be required for every operation.
 const (
 	PINPolicyNever PINPolicy = iota + 1
 	PINPolicyOnce
@@ -310,6 +314,9 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 // Attest generates a certificate for a key, signed by the YubiKey's attestation
 // certificate. This can be used to prove a key was generate on a specific
 // YubiKey.
+//
+// This method is only supported for YubiKey versions >= 4.3.0.
+// https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
 //
 // Certificates returned by this method MUST NOT be used for anything other than
 // attestion or determining the slots public key. For example, the certificate
@@ -525,7 +532,12 @@ type KeyAuth struct {
 	PIN string
 	// PINPrompt can be used to interactively request the PIN from the user. The
 	// method is only called when needed. For example, if a key specifies
-	// PINPromptOnce, PINPrompt will only be called once per YubiKey struct.
+	// PINPolicyOnce, PINPrompt will only be called once per YubiKey struct.
+	//
+	// BUG(ericchiang): On YubiKey versions older than 4.3.0 PIN caching isn't
+	// supported and PINPrompt will be called on every signing operation, even if
+	// PINPolicyOnce is specified. This is due to a bug in the VERIFY card
+	// command for older YubiKeys.
 	PINPrompt func() (pin string, err error)
 }
 
@@ -571,6 +583,29 @@ func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error))
 	return f(yk.tx)
 }
 
+func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
+	cert, err := yk.Attest(slot)
+	if err != nil {
+		var e *apduErr
+		if errors.As(err, &e) && e.sw1 == 0x6d && e.sw2 == 0x00 {
+			// Attestation cert command not supported, probably an older YubiKey.
+			// Guess PINPolicyAlways.
+			//
+			// See https://github.com/go-piv/piv-go/issues/55
+			return PINPolicyAlways, nil
+		}
+		return 0, fmt.Errorf("get attestation cert: %v", err)
+	}
+	a, err := parseAttestation(cert)
+	if err != nil {
+		return 0, fmt.Errorf("parse attestation cert: %v", err)
+	}
+	if _, ok := pinPolicyMap[a.PINPolicy]; ok {
+		return a.PINPolicy, nil
+	}
+	return PINPolicyOnce, nil
+}
+
 // PrivateKey is used to access signing and decryption options for the key
 // stored in the slot. The returned key implements crypto.Signer and/or
 // crypto.Decrypter depending on the key type.
@@ -589,17 +624,11 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 	if auth.PIN != "" || auth.PINPrompt != nil {
 		// Attempt to determine the key's PIN policy. This helps inform the
 		// strategy for when to prompt for a PIN.
-		cert, err := yk.Attest(slot)
+		policy, err := pinPolicy(yk, slot)
 		if err != nil {
-			return nil, fmt.Errorf("get attestation cert: %v", err)
+			return nil, err
 		}
-		a, err := parseAttestation(cert)
-		if err != nil {
-			return nil, fmt.Errorf("parse attestation cert: %v", err)
-		}
-		if _, ok := pinPolicyMap[a.PINPolicy]; ok {
-			pp = a.PINPolicy
-		}
+		pp = policy
 	}
 
 	switch pub := public.(type) {

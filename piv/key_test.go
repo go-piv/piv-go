@@ -35,6 +35,10 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
+	if err := yk.Reset(); err != nil {
+		t.Fatalf("reset yubikey: %v", err)
+	}
+
 	slot := SlotAuthentication
 
 	key := Key{
@@ -89,6 +93,8 @@ func TestPINPrompt(t *testing.T) {
 			yk, close := newTestYubiKey(t)
 			defer close()
 
+			testRequiresVersion(t, yk, 4, 3, 0)
+
 			k := Key{
 				Algorithm:   AlgorithmEC256,
 				PINPolicy:   test.policy,
@@ -127,6 +133,11 @@ func TestPINPrompt(t *testing.T) {
 	}
 }
 
+func supportsAttestation(yk *YubiKey) bool {
+	v := yk.Version()
+	return !(v.Major < 4 || v.Minor < 3)
+}
+
 func TestSlots(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	if err := yk.Reset(); err != nil {
@@ -149,8 +160,10 @@ func TestSlots(t *testing.T) {
 			yk, close := newTestYubiKey(t)
 			defer close()
 
-			if _, err := yk.Attest(test.slot); err == nil || !errors.Is(err, ErrNotFound) {
-				t.Errorf("attest: got err=%v, want=ErrNotFound", err)
+			if supportsAttestation(yk) {
+				if _, err := yk.Attest(test.slot); err == nil || !errors.Is(err, ErrNotFound) {
+					t.Errorf("attest: got err=%v, want=ErrNotFound", err)
+				}
 			}
 
 			k := Key{
@@ -162,8 +175,11 @@ func TestSlots(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generating key on slot: %v", err)
 			}
-			if _, err := yk.Attest(test.slot); err != nil {
-				t.Errorf("attest: %v", err)
+
+			if supportsAttestation(yk) {
+				if _, err := yk.Attest(test.slot); err != nil {
+					t.Errorf("attest: %v", err)
+				}
 			}
 
 			priv, err := yk.PrivateKey(test.slot, pub, KeyAuth{PIN: DefaultPIN})
@@ -320,6 +336,8 @@ func TestYubiKeyAttestation(t *testing.T) {
 		TouchPolicy: TouchPolicyNever,
 	}
 
+	testRequiresVersion(t, yk, 4, 3, 0)
+
 	cert, err := yk.AttestationCertificate()
 	if err != nil {
 		t.Fatalf("getting attestation certificate: %v", err)
@@ -350,6 +368,9 @@ func TestYubiKeyAttestation(t *testing.T) {
 	}
 	if a.TouchPolicy != key.TouchPolicy {
 		t.Errorf("attestation touch policy got=0x%x, wanted=0x%x", a.TouchPolicy, key.TouchPolicy)
+	}
+	if a.Version != yk.Version() {
+		t.Errorf("attestation version got=%#v, wanted=%#v", a.Version, yk.Version())
 	}
 }
 
@@ -453,6 +474,10 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
+			if test.alg == AlgorithmEC384 {
+				testRequiresVersion(t, yk, 4, 3, 0)
+			}
+
 			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
