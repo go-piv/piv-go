@@ -180,6 +180,19 @@ func (c *client) Open(card string) (*YubiKey, error) {
 	return yk, nil
 }
 
+// Version returns the version as reported by the PIV applet. For newer
+// YubiKeys (>=4.0.0) this corresponds to the version of the YubiKey itself.
+//
+// Older YubiKeys return values that aren't directly related to the YubiKey
+// version. For example, 3rd generation YubiKeys report 1.0.X.
+func (yk *YubiKey) Version() Version {
+	return Version{
+		Major: int(yk.version.major),
+		Minor: int(yk.version.minor),
+		Patch: int(yk.version.patch),
+	}
+}
+
 // Serial returns the YubiKey's serial number.
 func (yk *YubiKey) Serial() (uint32, error) {
 	return ykSerial(yk.tx, yk.version)
@@ -218,6 +231,7 @@ func ykLogin(tx *scTx, pin string) error {
 		return err
 	}
 
+	// https://csrc.nist.gov/CSRC/media/Publications/sp/800-73/4/archive/2015-05-29/documents/sp800_73-4_pt2_draft.pdf#page=20
 	cmd := apdu{instruction: insVerify, param2: 0x80, data: data}
 	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("verify pin: %w", err)
@@ -588,8 +602,8 @@ func ykVersion(tx *scTx) (*version, error) {
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
-	if n := len(resp); n < 3 {
-		return nil, fmt.Errorf("response was too short: %d", n)
+	if n := len(resp); n != 3 {
+		return nil, fmt.Errorf("expected response to have 3 bytes, got: %d", n)
 	}
 	return &version{resp[0], resp[1], resp[2]}, nil
 }

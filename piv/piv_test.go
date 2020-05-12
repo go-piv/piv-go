@@ -41,6 +41,13 @@ func testGetVersion(t *testing.T, h *scHandle) {
 	}
 }
 
+func testRequiresVersion(t *testing.T, yk *YubiKey, major, minor, patch int) {
+	v := yk.Version()
+	if v.Major < major || v.Minor < minor || v.Patch < patch {
+		t.Skipf("test requires yubikey version %d.%d.%d: got %d.%d.%d", major, minor, patch, v.Major, v.Minor, v.Patch)
+	}
+}
+
 func TestGetVersion(t *testing.T) { runHandleTest(t, testGetVersion) }
 
 func TestCards(t *testing.T) {
@@ -130,6 +137,9 @@ func TestYubiKeySerial(t *testing.T) {
 func TestYubiKeyLoginNeeded(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
+
+	testRequiresVersion(t, yk, 4, 3, 0)
+
 	if !ykLoginNeeded(yk.tx) {
 		t.Errorf("expected login needed")
 	}
