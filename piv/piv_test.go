@@ -41,9 +41,19 @@ func testGetVersion(t *testing.T, h *scHandle) {
 	}
 }
 
+func supportsVersion(v Version, major, minor, patch int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	if v.Minor != minor {
+		return v.Minor > minor
+	}
+	return v.Patch >= patch
+}
+
 func testRequiresVersion(t *testing.T, yk *YubiKey, major, minor, patch int) {
 	v := yk.Version()
-	if v.Major < major || v.Minor < minor || v.Patch < patch {
+	if !supportsVersion(v, major, minor, patch) {
 		t.Skipf("test requires yubikey version %d.%d.%d: got %d.%d.%d", major, minor, patch, v.Major, v.Minor, v.Patch)
 	}
 }
