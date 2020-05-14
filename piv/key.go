@@ -66,6 +66,7 @@ const (
 	FormfactorUSBANano
 	FormfactorUSBCKeychain
 	FormfactorUSBCNano
+	FormfactorUSBCLightningKeychain
 )
 
 // Attestation returns additional information about a key attested to be on a
@@ -142,6 +143,8 @@ func (a *Attestation) addExt(e pkix.Extension) error {
 			a.Formfactor = FormfactorUSBCKeychain
 		case 0x04:
 			a.Formfactor = FormfactorUSBCNano
+		case 0x05:
+			a.Formfactor = FormfactorUSBCLightningKeychain
 		default:
 			return fmt.Errorf("unrecognized formfactor: 0x%x", e.Value[0])
 		}
