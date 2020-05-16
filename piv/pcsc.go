@@ -117,6 +117,12 @@ func (a *apduErr) Unwrap() error {
 		return AuthErr{0}
 	case st&0xfff0 == 0x63c0:
 		return AuthErr{int(st & 0xf)}
+	case st&0xfff0 == 0x6300:
+		// Older YubiKeys sometimes return sw1=0x63 and sw2=0x0N to indicate the
+		// number of retries. This isn't spec compliant, but support it anyway.
+		//
+		// https://github.com/go-piv/piv-go/issues/60
+		return AuthErr{int(st & 0xf)}
 	}
 	return nil
 }

@@ -105,6 +105,8 @@ func TestErrors(t *testing.T) {
 		{0x63, 0xc0, false, true, 0, "verification failed (0 retries remaining)"},
 		{0x63, 0xc1, false, true, 1, "verification failed (1 retry remaining)"},
 		{0x63, 0xcf, false, true, 15, "verification failed (15 retries remaining)"},
+		{0x63, 0x01, false, true, 1, "verification failed (1 retry remaining)"},
+		{0x63, 0x0f, false, true, 15, "verification failed (15 retries remaining)"},
 		{0x69, 0x83, false, true, 0, "authentication method blocked"},
 		{0x6a, 0x82, true, false, 0, "data object or application not found"},
 	}
