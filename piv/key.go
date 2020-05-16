@@ -460,6 +460,11 @@ type Key struct {
 	// Algorithm to use when generating the key.
 	Algorithm Algorithm
 	// PINPolicy for the key.
+	//
+	// BUG(ericchiang): some older YubiKeys (third generation) will silently
+	// drop this value. If PINPolicyNever or PINPolicyOnce is supplied but the
+	// key still requires a PIN every time, you may be using a buggy key and
+	// should supply PINPolicyAlways. See https://github.com/go-piv/piv-go/issues/60
 	PINPolicy PINPolicy
 	// TouchPolicy for the key.
 	TouchPolicy TouchPolicy
@@ -536,12 +541,13 @@ type KeyAuth struct {
 	// PINPrompt can be used to interactively request the PIN from the user. The
 	// method is only called when needed. For example, if a key specifies
 	// PINPolicyOnce, PINPrompt will only be called once per YubiKey struct.
-	//
-	// BUG(ericchiang): On YubiKey versions older than 4.3.0 PIN caching isn't
-	// supported and PINPrompt will be called on every signing operation, even if
-	// PINPolicyOnce is specified. This is due to a bug in the VERIFY card
-	// command for older YubiKeys.
 	PINPrompt func() (pin string, err error)
+
+	// PINPolicy can be used to specify the PIN caching strategy for the slot. If
+	// not provided, this will be inferred from the attestation certificate.
+	//
+	// This field is required on older (<4.3.0) YubiKeys when using PINPrompt.
+	PINPolicy PINPolicy
 }
 
 func isAuthErr(err error) bool {
@@ -624,7 +630,11 @@ func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
 //
 func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) (crypto.PrivateKey, error) {
 	pp := PINPolicyNever
-	if auth.PIN != "" || auth.PINPrompt != nil {
+	if _, ok := pinPolicyMap[auth.PINPolicy]; ok {
+		// If the PIN policy is manually specified, trust that value instead of
+		// trying to use the attestation certificate.
+		pp = auth.PINPolicy
+	} else if auth.PIN != "" || auth.PINPrompt != nil {
 		// Attempt to determine the key's PIN policy. This helps inform the
 		// strategy for when to prompt for a PIN.
 		policy, err := pinPolicy(yk, slot)
