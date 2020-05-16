@@ -93,8 +93,6 @@ func TestPINPrompt(t *testing.T) {
 			yk, close := newTestYubiKey(t)
 			defer close()
 
-			testRequiresVersion(t, yk, 4, 3, 0)
-
 			k := Key{
 				Algorithm:   AlgorithmEC256,
 				PINPolicy:   test.policy,
@@ -111,6 +109,11 @@ func TestPINPrompt(t *testing.T) {
 					return DefaultPIN, nil
 				},
 			}
+
+			if !supportsAttestation(yk) {
+				auth.PINPolicy = test.policy
+			}
+
 			priv, err := yk.PrivateKey(SlotAuthentication, pub, auth)
 			if err != nil {
 				t.Fatalf("building private key: %v", err)
