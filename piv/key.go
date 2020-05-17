@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
@@ -250,10 +251,13 @@ type Algorithm int
 // Algorithms supported by this package. Note that not all cards will support
 // every algorithm.
 //
+// AlgorithmEd25519 is currently only implemented by SoloKeys.
+//
 // For algorithm discovery, see: https://github.com/ericchiang/piv-go/issues/1
 const (
 	AlgorithmEC256 Algorithm = iota + 1
 	AlgorithmEC384
+	AlgorithmEd25519
 	AlgorithmRSA1024
 	AlgorithmRSA2048
 )
@@ -304,6 +308,7 @@ var touchPolicyMap = map[TouchPolicy]byte{
 var algorithmsMap = map[Algorithm]byte{
 	AlgorithmEC256:   algECCP256,
 	AlgorithmEC384:   algECCP384,
+	AlgorithmEd25519: algEd25519,
 	AlgorithmRSA1024: algRSA1024,
 	AlgorithmRSA2048: algRSA2048,
 }
@@ -517,6 +522,12 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 		curve = elliptic.P256()
 	case AlgorithmEC384:
 		curve = elliptic.P384()
+	case AlgorithmEd25519:
+		pub, err := decodeEd25519Public(resp)
+		if err != nil {
+			return nil, fmt.Errorf("decoding ed25519 public key: %v", err)
+		}
+		return pub, nil
 	default:
 		return nil, fmt.Errorf("unsupported algorithm")
 	}
@@ -637,6 +648,8 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 	switch pub := public.(type) {
 	case *ecdsa.PublicKey:
 		return &keyECDSA{yk, slot, pub, auth, pp}, nil
+	case ed25519.PublicKey:
+		return &keyEd25519{yk, slot, pub, auth, pp}, nil
 	case *rsa.PublicKey:
 		return &keyRSA{yk, slot, pub, auth, pp}, nil
 	default:
@@ -659,6 +672,24 @@ func (k *keyECDSA) Public() crypto.PublicKey {
 func (k *keyECDSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykSignECDSA(tx, k.slot, k.pub, digest)
+	})
+}
+
+type keyEd25519 struct {
+	yk   *YubiKey
+	slot Slot
+	pub  ed25519.PublicKey
+	auth KeyAuth
+	pp   PINPolicy
+}
+
+func (k *keyEd25519) Public() crypto.PublicKey {
+	return k.pub
+}
+
+func (k *keyEd25519) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+		return skSignEd25519(tx, k.slot, k.pub, digest)
 	})
 }
 
@@ -729,6 +760,34 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 	return rs, nil
 }
 
+// This function only works on SoloKeys prototypes and other PIV devices that choose
+// to implement Ed25519 signatures under alg 0x22.
+func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
+	// Adaptation of
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
+	cmd := apdu{
+		instruction: insAuthenticate,
+		param1:      algEd25519,
+		param2:      byte(slot.Key),
+		data: marshalASN1(0x7c,
+			append([]byte{0x82, 0x00},
+				marshalASN1(0x81, digest)...)),
+	}
+	resp, err := tx.Transmit(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+	rs, _, err := unmarshalASN1(sig, 2, 0x02) // 0x82
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response signature: %v", err)
+	}
+	return rs, nil
+}
+
 func unmarshalASN1(b []byte, class, tag int) (obj, rest []byte, err error) {
 	var v asn1.RawValue
 	rest, err = asn1.Unmarshal(b, &v)
@@ -768,6 +827,23 @@ func decodeECPublic(b []byte, curve elliptic.Curve) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("resulting points are not on curve")
 	}
 	return &ecdsa.PublicKey{Curve: curve, X: &x, Y: &y}, nil
+}
+
+func decodeEd25519Public(b []byte) (ed25519.PublicKey, error) {
+	// Adaptation of
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
+	r, _, err := unmarshalASN1(b, 1, 0x49)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+	p, _, err := unmarshalASN1(r, 2, 0x06)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal points: %v", err)
+	}
+	if len(p) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("unexpected points length: %d", len(p))
+	}
+	return ed25519.PublicKey(p), nil
 }
 
 func decodeRSAPublic(b []byte) (*rsa.PublicKey, error) {
