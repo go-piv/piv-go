@@ -846,3 +846,38 @@ func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
 	}
 	return nil
 }
+
+// Card Holder Unique Identifier
+type CardId []byte
+
+func (yk *YubiKey) CardId() (CardId, error) {
+	return ykGetCardId(yk.tx)
+
+}
+func ykGetCardId(tx *scTx) (CardId, error) {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=17
+	// OID for CardId is 5FC102
+
+	cmd := apdu{
+		instruction: insGetData,
+		param1:      0x3f,
+		param2:      0xff,
+		data: []byte{
+			0x5c, // Tag list
+			0x03,
+			0x5f,
+			0xc1,
+			0x02,
+		},
+	}
+	resp, err := tx.Transmit(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=85
+	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
+	}
+	return obj, nil
+}
