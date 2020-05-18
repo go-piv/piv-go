@@ -484,17 +484,17 @@ func TestYubiKeyCardId(t *testing.T) {
 	if _, err := yk.CardID(); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expecting not found chuid")
 	}
-	var guid = [16]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0xff}
-	_, err := yk.SetCardID(guid, DefaultManagementKey)
+	var cardID = CardID{GUID: [16]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0xff},
+	}
+	if err := yk.SetCardID(DefaultManagementKey, &cardID); err != nil {
+		t.Fatal(err)
+	}
+	newCID, err := yk.CardID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	chuid, err := yk.CardID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(guid[:], chuid.GUID[:]) {
-		t.Errorf("(*CardID, got=0x%x, want=0x%x", chuid.GUID, guid)
+	if !bytes.Equal(newCID.GUID[:], cardID.GUID[:]) {
+		t.Errorf("(*CardID, got=0x%x, want=0x%x", newCID.GUID, cardID.GUID)
 	}
 }

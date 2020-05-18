@@ -851,14 +851,14 @@ func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
 // Raw contains the whole object
 // GUID contains the Card Universally Unique Identifier.
 type CardID struct {
-	Raw  []byte
+	raw  []byte
 	GUID [16]byte
 }
 
 // CardID returns the card CHUID with the GUID extracted
-func (yk *YubiKey) CardID() (CardID, error) {
+// If the CHUID is not set, the returned error wraps ErrNotFound.
+func (yk *YubiKey) CardID() (*CardID, error) {
 	return ykGetCardID(yk.tx)
-
 }
 
 /*
@@ -887,7 +887,7 @@ var chuidTemplate = []byte{
 
 const uuidOffset = 29
 
-func ykGetCardID(tx *scTx) (id CardID, err error) {
+func ykGetCardID(tx *scTx) (*CardID, error) {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=17
 	// OID for CardId is 5FC102
 
@@ -905,38 +905,38 @@ func ykGetCardID(tx *scTx) (id CardID, err error) {
 	}
 	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return id, fmt.Errorf("command failed: %w", err)
+		return nil, fmt.Errorf("command failed: %w", err)
 	}
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=85
 	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
 	if err != nil {
-		return id, fmt.Errorf("unmarshaling response: %v", err)
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
 	}
-	id.Raw = obj
-	if obj[27] == 0x34 {
-		endPos := uuidOffset + int(obj[28])
-		copy(id.GUID[:], obj[uuidOffset:endPos])
+	var id CardID
+	id.raw = obj
+	if len(obj) > uuidOffset {
+		// UUID is a TLV at position 27 with type equal to 0x34
+		if obj[27] == 0x34 {
+			if obj[28] != 0x10 {
+				return nil, fmt.Errorf("unexpected uuid length value: %d", obj[28])
+			}
+			endPos := uuidOffset + int(obj[28])
+			copy(id.GUID[:], obj[uuidOffset:endPos])
+		}
 	}
-	return
+	return &id, nil
 }
 
-// SetCardID initialize the CHUID card object using a predefined template defined as
-//  * Defined fields:
-//    - 0x30: FASC-N (hard-coded)
-//    - 0x34: Card UUID / GUID (settable)
-//    - 0x35: Exp. Date (hard-coded)
-//    - 0x3e: Signature (hard-coded, empty)
-//    - 0xfe: Error Detection Code (hard-coded)
-func (yk *YubiKey) SetCardID(GUID [16]byte, key [24]byte) (CardID, error) {
-	return ykSetCardID(yk.tx, key, GUID)
-
+// SetCardID initialize the CHUID card object using a predefined template
+func (yk *YubiKey) SetCardID(key [24]byte, id *CardID) error {
+	return ykSetCardID(yk.tx, key, id)
 }
 
-func ykSetCardID(tx *scTx, key [24]byte, guid [16]byte) (id CardID, err error) {
+func ykSetCardID(tx *scTx, key [24]byte, id *CardID) error {
 
-	id.Raw = make([]byte, len(chuidTemplate))
-	copy(id.Raw, chuidTemplate)
-	copy(id.Raw[uuidOffset:], guid[:])
+	id.raw = make([]byte, len(chuidTemplate))
+	copy(id.raw, chuidTemplate)
+	copy(id.raw[uuidOffset:], id.GUID[:])
 
 	data := append([]byte{
 		0x5c, // Tag list
@@ -944,7 +944,7 @@ func ykSetCardID(tx *scTx, key [24]byte, guid [16]byte) (id CardID, err error) {
 		0x5f,
 		0xc1,
 		0x02,
-	}, marshalASN1(0x53, id.Raw)...)
+	}, marshalASN1(0x53, id.raw)...)
 
 	cmd := apdu{
 		instruction: insPutData,
@@ -954,13 +954,13 @@ func ykSetCardID(tx *scTx, key [24]byte, guid [16]byte) (id CardID, err error) {
 	}
 
 	if err := ykAuthenticate(tx, key, rand.Reader); err != nil {
-		return id, fmt.Errorf("authenticating with key: %w", err)
+		return fmt.Errorf("authenticating with key: %w", err)
 	}
 
-	_, err = tx.Transmit(cmd)
+	_, err := tx.Transmit(cmd)
 	if err != nil {
-		return id, fmt.Errorf("command failed: %w", err)
+		return fmt.Errorf("command failed: %w", err)
 	}
 
-	return
+	return nil
 }
