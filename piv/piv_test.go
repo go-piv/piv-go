@@ -19,13 +19,21 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"io"
 	"math/bits"
 	"strings"
 	"testing"
-
-	"github.com/go-piv/piv-go/internal/pivtest"
 )
+
+// canModifyYubiKey indicates whether the test running has constented to
+// destroying data on YubiKeys connected to the system.
+var canModifyYubiKey bool
+
+func init() {
+	flag.BoolVar(&canModifyYubiKey, "wipe-yubikey", false,
+		"Flag required to run tests that access the yubikey")
+}
 
 func testGetVersion(t *testing.T, h *scHandle) {
 	tx, err := h.Begin()
@@ -75,7 +83,7 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 		if !strings.Contains(strings.ToLower(card), "yubikey") {
 			continue
 		}
-		if !pivtest.CanModifyYubiKey {
+		if !canModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
 		yk, err := Open(card)
@@ -106,7 +114,7 @@ func TestMultipleConnections(t *testing.T) {
 		if !strings.Contains(strings.ToLower(card), "yubikey") {
 			continue
 		}
-		if !pivtest.CanModifyYubiKey {
+		if !canModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
 		yk, err := Open(card)
