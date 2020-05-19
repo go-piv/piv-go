@@ -912,18 +912,39 @@ func ykGetCardID(tx *scTx) (*CardID, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unmarshaling response: %v", err)
 	}
-	var id CardID
+
+	var (
+		id   CardID
+		guid []byte
+		v    asn1.RawValue
+	)
 	id.raw = obj
-	if len(obj) > uuidOffset {
-		// UUID is a TLV at position 27 with type equal to 0x34
-		if obj[27] == 0x34 {
-			if obj[28] != 0x10 {
-				return nil, fmt.Errorf("unexpected uuid length value: %d", obj[28])
-			}
-			endPos := uuidOffset + int(obj[28])
-			copy(id.GUID[:], obj[uuidOffset:endPos])
+	d := obj
+	// if the GUID is present assign it
+	for len(d) > 0 {
+		rest, err := asn1.Unmarshal(d, &v)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshaling CHUID: %v", err)
 		}
+		// GUID is tag 34 / len of 16
+		if bytes.HasPrefix(v.FullBytes, []byte{0x34}) {
+			if len(v.Bytes) != 16 {
+				return nil, fmt.Errorf("incorrect guid length")
+			}
+			guid = v.Bytes
+			break
+		}
+		d = rest
 	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=19
+	// The Global Unique Identification number (GUID) field must be present, and shall include a
+	// Card Universally Unique Identifier (UUID)
+	if len(guid) == 0 {
+		return nil, fmt.Errorf("missing guid")
+	}
+
+	copy(id.GUID[:], guid)
+
 	return &id, nil
 }
 
