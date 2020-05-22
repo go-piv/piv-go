@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build darwin linux
+// +build darwin linux freebsd
 
 package piv
 
@@ -23,6 +23,10 @@ package piv
 // #cgo darwin LDFLAGS: -framework PCSC
 // #cgo linux CFLAGS: -I/usr/include/PCSC
 // #cgo linux LDFLAGS: -lpcsclite
+// #cgo freebsd CFLAGS: -I/usr/local/include/
+// #cgo freebsd CFLAGS: -I/usr/local/include/PCSC
+// #cgo freebsd LDFLAGS: -L/usr/local/lib/
+// #cgo freebsd LDFLAGS: -lpcsclite
 // #include <PCSC/winscard.h>
 // #include <PCSC/wintypes.h>
 import "C"
