@@ -248,6 +248,12 @@ sudo yum config-manager --set-enabled PowerTools
 sudo yum install pcsc-lite-devel
 ```
 
+On FreeBSD:
+
+```
+sudo pkg install pcsc-lite
+```
+
 On Windows:
 
 No prerequisites are needed. The default driver by Microsoft supports all functionalities
