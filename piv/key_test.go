@@ -579,3 +579,48 @@ func TestYubiKeyPrivateKeyPINError(t *testing.T) {
 		t.Errorf("expected sign to fail with pin prompt that returned error")
 	}
 }
+
+func TestRetiredKeyManagementSlot(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      uint32
+		wantSlot Slot
+		wantOk   bool
+	}{
+		{
+			name:     "Non-existent slot, before range",
+			key:      0x0,
+			wantSlot: Slot{},
+			wantOk:   false,
+		},
+		{
+			name:     "Non-existent slot, after range",
+			key:      0x96,
+			wantSlot: Slot{},
+			wantOk:   false,
+		},
+		{
+			name:     "First retired slot key",
+			key:      0x82,
+			wantSlot: Slot{0x82, 0x5fc10d},
+			wantOk:   true,
+		},
+		{
+			name:     "Last retired slot key",
+			key:      0x95,
+			wantSlot: Slot{0x95, 0x5fc120},
+			wantOk:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSlot, gotOk := RetiredKeyManagementSlot(tt.key)
+			if gotSlot != tt.wantSlot {
+				t.Errorf("RetiredKeyManagementSlot() got = %v, want %v", gotSlot, tt.wantSlot)
+			}
+			if gotOk != tt.wantOk {
+				t.Errorf("RetiredKeyManagementSlot() got1 = %v, want %v", gotOk, tt.wantOk)
+			}
+		})
+	}
+}

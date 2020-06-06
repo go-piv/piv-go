@@ -244,6 +244,44 @@ var (
 	slotAttestation = Slot{0xf9, 0x5fff01}
 )
 
+var retiredKeyManagementSlots = map[uint32]Slot{
+	0x82: {0x82, 0x5fc10d},
+	0x83: {0x83, 0x5fc10e},
+	0x84: {0x84, 0x5fc10f},
+	0x85: {0x85, 0x5fc110},
+	0x86: {0x86, 0x5fc111},
+	0x87: {0x87, 0x5fc112},
+	0x88: {0x88, 0x5fc113},
+	0x89: {0x89, 0x5fc114},
+	0x8a: {0x8a, 0x5fc115},
+	0x8b: {0x8b, 0x5fc116},
+	0x8c: {0x8c, 0x5fc117},
+	0x8d: {0x8d, 0x5fc118},
+	0x8e: {0x8e, 0x5fc119},
+	0x8f: {0x8f, 0x5fc11a},
+	0x90: {0x90, 0x5fc11b},
+	0x91: {0x91, 0x5fc11c},
+	0x92: {0x92, 0x5fc11d},
+	0x93: {0x93, 0x5fc11e},
+	0x94: {0x94, 0x5fc11f},
+	0x95: {0x95, 0x5fc120},
+}
+
+// RetiredKeyManagementSlot provides access to "retired" slots. Slots meant for old Key Management
+// keys that have been rotated. YubiKeys 4 and later support values between 0x82 and 0x95 (inclusive).
+//
+//     slot, ok := RetiredKeyManagementSlot(0x82)
+//     if !ok {
+//         // unrecognized slot
+//     }
+//     pub, err := yk.GenerateKey(managementKey, slot, key)
+//
+// https://developers.yubico.com/PIV/Introduction/Certificate_slots.html#_slot_82_95_retired_key_management
+func RetiredKeyManagementSlot(key uint32) (Slot, bool) {
+	slot, ok := retiredKeyManagementSlots[key]
+	return slot, ok
+}
+
 // Algorithm represents a specific algorithm and bit size supported by the PIV
 // specification.
 type Algorithm int
