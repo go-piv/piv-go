@@ -284,8 +284,8 @@ type TouchPolicy int
 // Touch policies supported by this package.
 const (
 	TouchPolicyNever TouchPolicy = iota + 1
-	TouchPolicyCached
 	TouchPolicyAlways
+	TouchPolicyCached
 )
 
 const (
