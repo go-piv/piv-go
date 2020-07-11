@@ -18,11 +18,8 @@ package piv
 
 // https://ludovicrousseau.blogspot.com/2010/04/pcsc-sample-in-c.html
 
-// TODO: Figure out if linux flags should use pkg-config instead
-
 // #cgo darwin LDFLAGS: -framework PCSC
-// #cgo linux CFLAGS: -I/usr/include/PCSC
-// #cgo linux LDFLAGS: -lpcsclite
+// #cgo linux pkg-config: libpcsclite
 // #cgo freebsd CFLAGS: -I/usr/local/include/
 // #cgo freebsd CFLAGS: -I/usr/local/include/PCSC
 // #cgo freebsd LDFLAGS: -L/usr/local/lib/
