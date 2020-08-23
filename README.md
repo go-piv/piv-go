@@ -1,6 +1,6 @@
 This is not an officially supported Google product
 
-# A pure Go YubiKey PIV implementation
+# A Go YubiKey PIV implementation
 
 [![GoDoc](https://godoc.org/github.com/go-piv/piv-go/piv?status.svg)](https://godoc.org/github.com/go-piv/piv-go/piv)
 
