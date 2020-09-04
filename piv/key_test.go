@@ -78,6 +78,65 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	}
 }
 
+func TestYubiKeyECDSASharedKey(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	slot := SlotAuthentication
+
+	key := Key{
+		Algorithm:   AlgorithmEC256,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	pub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an ecdsa key")
+	}
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	privECDSA, ok := priv.(*ECDSAPrivateKey)
+	if !ok {
+		t.Fatalf("expected private key to be ECDSA private key")
+	}
+
+	t.Run("good", func(t *testing.T) {
+		eph, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("cannot generate key: %v", err)
+		}
+		mult, _ := pub.ScalarMult(pub.X, pub.Y, eph.D.Bytes())
+		secret1 := mult.Bytes()
+
+		secret2, err := privECDSA.SharedKey(&eph.PublicKey)
+		if err != nil {
+			t.Fatalf("key agreement failed: %v", err)
+		}
+		if !bytes.Equal(secret1, secret2) {
+			t.Errorf("key agreement didn't match")
+		}
+	})
+
+	t.Run("bad", func(t *testing.T) {
+		t.Run("size", func(t *testing.T) {
+			eph, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+			if err != nil {
+				t.Fatalf("cannot generate key: %v", err)
+			}
+			_, err = privECDSA.SharedKey(&eph.PublicKey)
+			if !errors.Is(err, errMismatchingAlgorithms) {
+				t.Fatalf("unexpected error value: wanted errMismatchingAlgorithms: %v", err)
+			}
+		})
+	})
+}
+
 func TestPINPrompt(t *testing.T) {
 	tests := []struct {
 		name   string
