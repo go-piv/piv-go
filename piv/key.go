@@ -31,6 +31,10 @@ import (
 	"math/big"
 )
 
+// errMismatchingAlgorithms is returned when a cryptographic operation
+// is given keys using different algorithms.
+var errMismatchingAlgorithms = errors.New("mismatching key algorithms")
+
 // Slot is a private key and certificate combination managed by the security key.
 type Slot struct {
 	// Key is a reference for a key type.
@@ -657,7 +661,7 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 
 	switch pub := public.(type) {
 	case *ecdsa.PublicKey:
-		return &keyECDSA{yk, slot, pub, auth, pp}, nil
+		return &ECDSAPrivateKey{yk, slot, pub, auth, pp}, nil
 	case ed25519.PublicKey:
 		return &keyEd25519{yk, slot, pub, auth, pp}, nil
 	case *rsa.PublicKey:
@@ -667,7 +671,13 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 	}
 }
 
-type keyECDSA struct {
+// ECDSAPrivateKey is a crypto.PrivateKey implementation for ECDSA
+// keys. It implements crypto.Signer and the method SharedKey performs
+// Diffie-Hellman key agreements.
+//
+// Keys returned by YubiKey.PrivateKey() may be type asserted to
+// *ECDSAPrivateKey, if the slot contains an ECDSA key.
+type ECDSAPrivateKey struct {
 	yk   *YubiKey
 	slot Slot
 	pub  *ecdsa.PublicKey
@@ -675,13 +685,69 @@ type keyECDSA struct {
 	pp   PINPolicy
 }
 
-func (k *keyECDSA) Public() crypto.PublicKey {
+// Public returns the public key associated with this private key.
+func (k *ECDSAPrivateKey) Public() crypto.PublicKey {
 	return k.pub
 }
 
-func (k *keyECDSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+var _ crypto.Signer = (*ECDSAPrivateKey)(nil)
+
+// Sign implements crypto.Signer.
+func (k *ECDSAPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykSignECDSA(tx, k.slot, k.pub, digest)
+	})
+}
+
+// SharedKey performs a Diffie-Hellman key agreement with the peer
+// to produce a shared secret key.
+//
+// Peer's public key must use the same algorithm as the key in
+// this slot, or an error will be returned.
+//
+// Length of the result depends on the types and sizes of the keys
+// used for the operation. Callers should use a cryptographic key
+// derivation function to extract the amount of bytes they need.
+func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
+	if peer.Curve.Params().BitSize != k.pub.Curve.Params().BitSize {
+		return nil, errMismatchingAlgorithms
+	}
+	msg := elliptic.Marshal(peer.Curve, peer.X, peer.Y)
+	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+		var alg byte
+		size := k.pub.Params().BitSize
+		switch size {
+		case 256:
+			alg = algECCP256
+		case 384:
+			alg = algECCP384
+		default:
+			return nil, fmt.Errorf("unsupported curve: %d", size)
+		}
+
+		// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
+		// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=93
+		cmd := apdu{
+			instruction: insAuthenticate,
+			param1:      alg,
+			param2:      byte(k.slot.Key),
+			data: marshalASN1(0x7c,
+				append([]byte{0x82, 0x00},
+					marshalASN1(0x85, msg)...)),
+		}
+		resp, err := tx.Transmit(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("command failed: %w", err)
+		}
+		sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal response: %v", err)
+		}
+		rs, _, err := unmarshalASN1(sig, 2, 0x02) // 0x82
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal response signature: %v", err)
+		}
+		return rs, nil
 	})
 }
 
