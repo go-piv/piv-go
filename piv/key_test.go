@@ -683,3 +683,162 @@ func TestRetiredKeyManagementSlot(t *testing.T) {
 		})
 	}
 }
+
+func TestSetRSAPrivateKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		bits    int
+		slot    Slot
+		wantErr error
+	}{
+
+		{
+			name:    "rsa 1024",
+			bits:    1024,
+			slot:    SlotSignature,
+			wantErr: nil,
+		},
+		{
+			name:    "rsa 2048",
+			bits:    2048,
+			slot:    SlotCardAuthentication,
+			wantErr: nil,
+		},
+		{
+			name:    "rsa 4096",
+			bits:    4096,
+			slot:    SlotAuthentication,
+			wantErr: errUnsupportedKeySize,
+		},
+		{
+			name:    "rsa 512",
+			bits:    512,
+			slot:    SlotKeyManagement,
+			wantErr: errUnsupportedKeySize,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yk, close := newTestYubiKey(t)
+			defer close()
+
+			generated, err := rsa.GenerateKey(rand.Reader, tt.bits)
+			if err != nil {
+				t.Fatalf("generating private key: %v", err)
+			}
+
+			err = yk.SetPrivateKeyInsecure(DefaultManagementKey, tt.slot, generated, Key{
+				PINPolicy:   PINPolicyNever,
+				TouchPolicy: TouchPolicyNever,
+			})
+			if err != tt.wantErr {
+				t.Fatalf("SetPrivateKeyInsecure(): wantErr=%v, got err=%v", tt.wantErr, err)
+			}
+			if err != nil {
+				return
+			}
+
+			priv, err := yk.PrivateKey(tt.slot, &generated.PublicKey, KeyAuth{})
+			if err != nil {
+				t.Fatalf("getting private key: %v", err)
+			}
+
+			data := []byte("Test data that we will encrypt")
+
+			// Encrypt the data using our generated key
+			encrypted, err := rsa.EncryptPKCS1v15(rand.Reader, &generated.PublicKey, data)
+			if err != nil {
+				t.Fatalf("encrypting data: %v", err)
+			}
+
+			deviceDecrypter := priv.(crypto.Decrypter)
+
+			// Decrypt the data on the device
+			decrypted, err := deviceDecrypter.Decrypt(rand.Reader, encrypted, nil)
+			if err != nil {
+				t.Fatalf("decrypting data: %v", err)
+			}
+
+			if bytes.Compare(data, decrypted) != 0 {
+				t.Fatalf("decrypted data is different to the source data")
+			}
+		})
+	}
+}
+
+func TestSetECDSAPrivateKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		curve   elliptic.Curve
+		slot    Slot
+		wantErr error
+	}{
+		{
+			name:    "ecdsa P256",
+			curve:   elliptic.P256(),
+			slot:    SlotSignature,
+			wantErr: nil,
+		},
+		{
+			name:    "ecdsa P384",
+			curve:   elliptic.P384(),
+			slot:    SlotCardAuthentication,
+			wantErr: nil,
+		},
+		{
+			name:    "ecdsa P224",
+			curve:   elliptic.P224(),
+			slot:    SlotAuthentication,
+			wantErr: unsupportedCurveError{curve: 224},
+		},
+		{
+			name:    "ecdsa P521",
+			curve:   elliptic.P521(),
+			slot:    SlotKeyManagement,
+			wantErr: unsupportedCurveError{curve: 521},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yk, close := newTestYubiKey(t)
+			defer close()
+
+			generated, err := ecdsa.GenerateKey(tt.curve, rand.Reader)
+			if err != nil {
+				t.Fatalf("generating private key: %v", err)
+			}
+
+			err = yk.SetPrivateKeyInsecure(DefaultManagementKey, tt.slot, generated, Key{
+				PINPolicy:   PINPolicyNever,
+				TouchPolicy: TouchPolicyNever,
+			})
+			if err != tt.wantErr {
+				t.Fatalf("SetPrivateKeyInsecure(): wantErr=%v, got err=%v", tt.wantErr, err)
+			}
+			if err != nil {
+				return
+			}
+
+			priv, err := yk.PrivateKey(tt.slot, &generated.PublicKey, KeyAuth{})
+			if err != nil {
+				t.Fatalf("getting private key: %v", err)
+			}
+
+			deviceSigner := priv.(crypto.Signer)
+
+			hash := []byte("Test data to sign")
+			// Sign the data on the device
+			sig, err := deviceSigner.Sign(rand.Reader, hash, nil)
+			if err != nil {
+				t.Fatalf("signing data: %v", err)
+			}
+
+			// Verify the signature using the generated key
+			if !ecdsa.VerifyASN1(&generated.PublicKey, hash, sig) {
+				t.Fatal("Failed to verify signed data")
+			}
+		})
+	}
+}
