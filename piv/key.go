@@ -35,6 +35,18 @@ import (
 // is given keys using different algorithms.
 var errMismatchingAlgorithms = errors.New("mismatching key algorithms")
 
+// errUnsupportedKeySize is returned when a key has an unsupported size
+var errUnsupportedKeySize = errors.New("unsupported key size")
+
+// unsupportedCurveError is used when a key has an unsupported curve
+type unsupportedCurveError struct {
+	curve int
+}
+
+func (e unsupportedCurveError) Error() string {
+	return fmt.Sprintf("unsupported curve: %d", e.curve)
+}
+
 // Slot is a private key and certificate combination managed by the security key.
 type Slot struct {
 	// Key is a reference for a key type.
@@ -445,19 +457,25 @@ func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
 	return cert, nil
 }
 
-// marshalASN1 encodes a tag, length and data.
-//
-// TODO: clean this up and maybe switch to cryptobyte?
-func marshalASN1(tag byte, data []byte) []byte {
+// marshalASN1Length encodes the length.
+func marshalASN1Length(n uint64) []byte {
 	var l []byte
-	n := uint64(len(data))
 	if n < 0x80 {
 		l = []byte{byte(n)}
-	} else if len(data) < 0x100 {
+	} else if n < 0x100 {
 		l = []byte{0x81, byte(n)}
 	} else {
 		l = []byte{0x82, byte(n >> 8), byte(n)}
 	}
+
+	return l
+}
+
+// marshalASN1 encodes a tag, length and data.
+//
+// TODO: clean this up and maybe switch to cryptobyte?
+func marshalASN1(tag byte, data []byte) []byte {
+	l := marshalASN1Length(uint64(len(data)))
 	d := append([]byte{tag}, l...)
 	return append(d, data...)
 }
@@ -709,6 +727,125 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 	}
 }
 
+// SetPrivateKeyInsecure is an insecure method which imports a private key into the slot.
+// Users should almost always use GeneratePrivateKey() instead.
+//
+// Importing a private key breaks functionality provided by this package, including
+// AttestationCertificate() and Attest(). There are no stability guarantees for other
+// methods for imported private keys.
+//
+// Keys generated outside of the YubiKey should not be considered hardware-backed,
+// as there's no way to prove the key wasn't copied, exfiltrated, or replaced with malicious
+// material before being imported.
+func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto.PrivateKey, policy Key) error {
+	// Reference implementation
+	// https://github.com/Yubico/yubico-piv-tool/blob/671a5740ef09d6c5d9d33f6e5575450750b58bde/lib/ykpiv.c#L1812
+
+	params := make([][]byte, 0)
+
+	var paramTag byte
+	var elemLen int
+
+	switch priv := private.(type) {
+	case *rsa.PrivateKey:
+		paramTag = 0x01
+		switch priv.N.BitLen() {
+		case 1024:
+			policy.Algorithm = AlgorithmRSA1024
+			elemLen = 64
+		case 2048:
+			policy.Algorithm = AlgorithmRSA2048
+			elemLen = 128
+		default:
+			return errUnsupportedKeySize
+		}
+
+		priv.Precompute()
+
+		params = append(params, priv.Primes[0].Bytes())        // P
+		params = append(params, priv.Primes[1].Bytes())        // Q
+		params = append(params, priv.Precomputed.Dp.Bytes())   // dP
+		params = append(params, priv.Precomputed.Dq.Bytes())   // dQ
+		params = append(params, priv.Precomputed.Qinv.Bytes()) // Qinv
+	case *ecdsa.PrivateKey:
+		paramTag = 0x6
+		size := priv.PublicKey.Params().BitSize
+		switch size {
+		case 256:
+			policy.Algorithm = AlgorithmEC256
+			elemLen = 32
+		case 384:
+			policy.Algorithm = AlgorithmEC384
+			elemLen = 48
+		default:
+			return unsupportedCurveError{curve: size}
+		}
+
+		// S value
+		privateKey := make([]byte, elemLen)
+		valueBytes := priv.D.Bytes()
+		padding := len(privateKey) - len(valueBytes)
+		copy(privateKey[padding:], valueBytes)
+
+		params = append(params, privateKey)
+	default:
+		return errors.New("unsupported private key type")
+	}
+
+	elemLenASN1 := marshalASN1Length(uint64(elemLen))
+
+	tags := make([]byte, 0)
+	for i, param := range params {
+		tag := paramTag + byte(i)
+		tags = append(tags, tag)
+		tags = append(tags, elemLenASN1...)
+
+		padding := elemLen - len(param)
+		param = append(make([]byte, padding), param...)
+		tags = append(tags, param...)
+	}
+
+	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+		return fmt.Errorf("authenticating with management key: %w", err)
+	}
+
+	return ykImportKey(yk.tx, tags, slot, policy)
+}
+
+func ykImportKey(tx *scTx, tags []byte, slot Slot, o Key) error {
+	alg, ok := algorithmsMap[o.Algorithm]
+	if !ok {
+		return fmt.Errorf("unsupported algorithm")
+
+	}
+	tp, ok := touchPolicyMap[o.TouchPolicy]
+	if !ok {
+		return fmt.Errorf("unsupported touch policy")
+	}
+	pp, ok := pinPolicyMap[o.PINPolicy]
+	if !ok {
+		return fmt.Errorf("unsupported pin policy")
+	}
+
+	// This command is a Yubico PIV extension.
+	// https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html
+	cmd := apdu{
+		instruction: insImportKey,
+		param1:      alg,
+		param2:      byte(slot.Key),
+		data: append(tags, []byte{
+			tagPINPolicy, 0x01, pp,
+			tagTouchPolicy, 0x01, tp,
+		}...),
+	}
+
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+
+	return nil
+}
+
 // ECDSAPrivateKey is a crypto.PrivateKey implementation for ECDSA
 // keys. It implements crypto.Signer and the method SharedKey performs
 // Diffie-Hellman key agreements.
@@ -760,7 +897,7 @@ func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
 		case 384:
 			alg = algECCP384
 		default:
-			return nil, fmt.Errorf("unsupported curve: %d", size)
+			return nil, unsupportedCurveError{curve: size}
 		}
 
 		// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
@@ -840,7 +977,7 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 	case 384:
 		alg = algECCP384
 	default:
-		return nil, fmt.Errorf("unsupported curve: %d", size)
+		return nil, unsupportedCurveError{curve: size}
 	}
 
 	// Same as the standard library
