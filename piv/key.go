@@ -617,7 +617,8 @@ type KeyAuth struct {
 	// PINPolicy can be used to specify the PIN caching strategy for the slot. If
 	// not provided, this will be inferred from the attestation certificate.
 	//
-	// This field is required on older (<4.3.0) YubiKeys when using PINPrompt.
+	// This field is required on older (<4.3.0) YubiKeys when using PINPrompt,
+	// as well as for keys imported to the card.
 	PINPolicy PINPolicy
 }
 
