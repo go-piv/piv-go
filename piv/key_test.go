@@ -433,6 +433,12 @@ func TestYubiKeyAttestation(t *testing.T) {
 	if a.Version != yk.Version() {
 		t.Errorf("attestation version got=%#v, wanted=%#v", a.Version, yk.Version())
 	}
+	if a.Slot != SlotAuthentication {
+		t.Errorf("attested slot got=%v, wanted=%v", a.Slot, SlotAuthentication)
+	}
+	if a.Slot.String() != "9a" {
+		t.Errorf("attested slot name got=%s, wanted=%s", a.Slot.String(), "9a")
+	}
 }
 
 func TestYubiKeyStoreCertificate(t *testing.T) {
@@ -838,6 +844,54 @@ func TestSetECDSAPrivateKey(t *testing.T) {
 			// Verify the signature using the generated key
 			if !ecdsa.VerifyASN1(&generated.PublicKey, hash, sig) {
 				t.Fatal("Failed to verify signed data")
+			}
+		})
+	}
+}
+
+func TestParseSlot(t *testing.T) {
+	tests := []struct {
+		name string
+		cn   string
+		ok   bool
+		slot Slot
+	}{
+		{
+			name: "Missing Yubico PIV Prefix",
+			cn:   "invalid",
+			ok:   false,
+			slot: Slot{},
+		},
+		{
+			name: "Invalid Slot Name",
+			cn:   yubikeySubjectCNPrefix + "xy",
+			ok:   false,
+			slot: Slot{},
+		},
+		{
+			name: "Valid -- SlotAuthentication",
+			cn:   yubikeySubjectCNPrefix + "9a",
+			ok:   true,
+			slot: SlotAuthentication,
+		},
+		{
+			name: "Valid -- Retired Management Key",
+			cn:   yubikeySubjectCNPrefix + "89",
+			ok:   true,
+			slot: retiredKeyManagementSlots[uint32(137)],
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			slot, ok := parseSlot(test.cn)
+
+			if ok != test.ok {
+				t.Errorf("ok status returned %v, expected %v", ok, test.ok)
+			}
+
+			if slot != test.slot {
+				t.Errorf("returned slot %+v did not match expected %+v", slot, test.slot)
 			}
 		})
 	}

@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"strconv"
+	"strings"
 )
 
 // errMismatchingAlgorithms is returned when a cryptographic operation
@@ -86,8 +88,13 @@ const (
 	FormfactorUSBCLightningKeychain
 )
 
-// Attestation returns additional information about a key attested to be on a
-// card.
+// Prefix in the x509 Subject Common Name for YubiKey attestations
+// https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
+const yubikeySubjectCNPrefix = "YubiKey PIV Attestation "
+
+// Attestation returns additional information about a key attested to be generated
+// on a card. See https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
+// for more information.
 type Attestation struct {
 	// Version of the YubiKey's firmware.
 	Version Version
@@ -102,6 +109,11 @@ type Attestation struct {
 	PINPolicy PINPolicy
 	// TouchPolicy set on the slot.
 	TouchPolicy TouchPolicy
+
+	// Slot is the inferred slot the attested key resides in based on the
+	// common name in the attestation. If the slot cannot be determined,
+	// this field will be an empty struct.
+	Slot Slot
 }
 
 func (a *Attestation) addExt(e pkix.Extension) error {
@@ -210,7 +222,38 @@ func parseAttestation(slotCert *x509.Certificate) (*Attestation, error) {
 			return nil, fmt.Errorf("parsing extension: %v", err)
 		}
 	}
+
+	slot, ok := parseSlot(slotCert.Subject.CommonName)
+	if ok {
+		a.Slot = slot
+	}
+
 	return &a, nil
+}
+
+func parseSlot(commonName string) (Slot, bool) {
+	if !strings.HasPrefix(commonName, yubikeySubjectCNPrefix) {
+		return Slot{}, false
+	}
+
+	slotName := strings.TrimPrefix(commonName, yubikeySubjectCNPrefix)
+	key, err := strconv.ParseUint(slotName, 16, 32)
+	if err != nil {
+		return Slot{}, false
+	}
+
+	switch uint32(key) {
+	case SlotAuthentication.Key:
+		return SlotAuthentication, true
+	case SlotSignature.Key:
+		return SlotSignature, true
+	case SlotCardAuthentication.Key:
+		return SlotCardAuthentication, true
+	case SlotKeyManagement.Key:
+		return SlotKeyManagement, true
+	}
+
+	return RetiredKeyManagementSlot(uint32(key))
 }
 
 // yubicoPIVCAPEM is the PEM encoded attestation certificate used by Yubico.
@@ -296,6 +339,11 @@ var retiredKeyManagementSlots = map[uint32]Slot{
 func RetiredKeyManagementSlot(key uint32) (Slot, bool) {
 	slot, ok := retiredKeyManagementSlots[key]
 	return slot, ok
+}
+
+// String returns the two-character hex representation of the slot
+func (s Slot) String() string {
+	return strconv.FormatUint(uint64(s.Key), 16)
 }
 
 // Algorithm represents a specific algorithm and bit size supported by the PIV
