@@ -265,6 +265,10 @@ Please notice the following:
 
 >Windows support is best effort due to lack of test hardware. This means the maintainers will take patches for Windows, but if you encounter a bug or the build is broken, you may be asked to fix it.
 
+## Non-YubiKey smartcards
+
+Non-YubiKey smartcards that implement the PIV standard are not officially supported due to a lack of test hardware. However, PRs that fix integrations with other smartcards are welcome, and piv-go will attempt to not break that support.  
+
 ## Testing
 
 Tests automatically find connected available YubiKeys, but won't modify the
