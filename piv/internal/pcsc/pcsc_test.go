@@ -26,11 +26,9 @@ func TestVersion(t *testing.T) {
 	}
 	defer c.Close()
 
-	major, minor, err := c.version()
-	if err != nil {
-		t.Fatalf("getting client version: %v", err)
+	if err := c.checkVersion(); err != nil {
+		t.Fatalf("checking client client version: %v", err)
 	}
-	t.Log(major, minor)
 }
 
 func TestListReaders(t *testing.T) {
@@ -40,9 +38,100 @@ func TestListReaders(t *testing.T) {
 	}
 	defer c.Close()
 
-	readers, err := c.readers()
+	if _, err := c.Readers(); err != nil {
+		t.Fatalf("listing readers: %v", err)
+	}
+}
+
+func TestNewContext(t *testing.T) {
+	c, err := NewClient(context.Background(), &Config{})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	defer c.Close()
+
+	ctx, err := c.NewContext()
+	if err != nil {
+		t.Fatalf("create context: %v", err)
+	}
+	if err := ctx.Close(); err != nil {
+		t.Fatalf("close context: %v", err)
+	}
+}
+
+func TestConnect(t *testing.T) {
+	c, err := NewClient(context.Background(), &Config{})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	defer c.Close()
+
+	ctx, err := c.NewContext()
+	if err != nil {
+		t.Fatalf("create context: %v", err)
+	}
+	defer func() {
+		if err := ctx.Close(); err != nil {
+			t.Fatalf("close context: %v", err)
+		}
+	}()
+
+	readers, err := c.Readers()
 	if err != nil {
 		t.Fatalf("listing readers: %v", err)
 	}
-	t.Log(readers)
+	if len(readers) == 0 {
+		t.Skipf("no readers available for test")
+	}
+	reader := readers[0]
+
+	card, err := ctx.Connect(reader, Exclusive)
+	if err != nil {
+		t.Fatalf("new card: %v", err)
+	}
+	if err := card.Close(); err != nil {
+		t.Fatalf("close card: %v", err)
+	}
+}
+
+func TestBeginTransaction(t *testing.T) {
+	c, err := NewClient(context.Background(), &Config{})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	defer c.Close()
+
+	ctx, err := c.NewContext()
+	if err != nil {
+		t.Fatalf("create context: %v", err)
+	}
+	defer func() {
+		if err := ctx.Close(); err != nil {
+			t.Fatalf("close context: %v", err)
+		}
+	}()
+
+	readers, err := c.Readers()
+	if err != nil {
+		t.Fatalf("listing readers: %v", err)
+	}
+	if len(readers) == 0 {
+		t.Skipf("no readers available for test")
+	}
+	reader := readers[0]
+	card, err := ctx.Connect(reader, Exclusive)
+	if err != nil {
+		t.Fatalf("new card: %v", err)
+	}
+	defer func() {
+		if err := card.Close(); err != nil {
+			t.Fatalf("close card: %v", err)
+		}
+	}()
+	if err := card.BeginTransaction(); err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+	if err := card.EndTransaction(); err != nil {
+		t.Fatalf("end transaction: %v", err)
+	}
 }
