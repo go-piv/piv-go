@@ -194,23 +194,36 @@ func Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
 }
 
 type verifier struct {
-	Root *x509.Certificate
+	Roots *x509.CertPool
 }
 
 func (v *verifier) Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
-	root := v.Root
-	if root == nil {
-		ca, err := yubicoCA()
+	o := x509.VerifyOptions{KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	o.Roots = v.Roots
+	if o.Roots == nil {
+		cas, err := yubicoCAs()
 		if err != nil {
-			return nil, fmt.Errorf("parsing yubico ca: %v", err)
+			return nil, fmt.Errorf("failed to load yubico CAs: %v", err)
 		}
-		root = ca
+		o.Roots = cas
 	}
-	if err := verifySignature(root, attestationCert); err != nil {
-		return nil, fmt.Errorf("attestation certifcate not signed by : %v", err)
+
+	o.Intermediates = x509.NewCertPool()
+
+	// The attestation cert in some yubikey 4 does not encode X509v3 Basic Constraints.
+	// This isn't valid as per https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9
+	// (fourth paragraph) and thus makes x509.go validation fail.
+	// Work around this by setting this constraint here.
+	if attestationCert.BasicConstraintsValid == false {
+		attestationCert.BasicConstraintsValid = true
+		attestationCert.IsCA = true
 	}
-	if err := verifySignature(attestationCert, slotCert); err != nil {
-		return nil, fmt.Errorf("slot certificate not signed by attestation certifcate: %v", err)
+
+	o.Intermediates.AddCert(attestationCert)
+
+	_, err := slotCert.Verify(o)
+	if err != nil {
+		return nil, fmt.Errorf("error verifying attestation certificate: %v", err)
 	}
 	return parseAttestation(slotCert)
 }
@@ -256,10 +269,10 @@ func parseSlot(commonName string) (Slot, bool) {
 	return RetiredKeyManagementSlot(uint32(key))
 }
 
-// yubicoPIVCAPEM is the PEM encoded attestation certificate used by Yubico.
+// yubicoPIVCAPEMAfter2018 is the PEM encoded attestation certificate used by Yubico.
 //
 // https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
-const yubicoPIVCAPEM = `-----BEGIN CERTIFICATE-----
+const yubicoPIVCAPEMAfter2018 = `-----BEGIN CERTIFICATE-----
 MIIDFzCCAf+gAwIBAgIDBAZHMA0GCSqGSIb3DQEBCwUAMCsxKTAnBgNVBAMMIFl1
 YmljbyBQSVYgUm9vdCBDQSBTZXJpYWwgMjYzNzUxMCAXDTE2MDMxNDAwMDAwMFoY
 DzIwNTIwNDE3MDAwMDAwWjArMSkwJwYDVQQDDCBZdWJpY28gUElWIFJvb3QgQ0Eg
@@ -279,12 +292,58 @@ Fqyi4+JE014cSgR57Jcu3dZiehB6UtAPgad9L5cNvua/IWRmm+ANy3O2LH++Pyl8
 SREzU8onbBsjMg9QDiSf5oJLKvd/Ren+zGY7
 -----END CERTIFICATE-----`
 
-func yubicoCA() (*x509.Certificate, error) {
-	b, _ := pem.Decode([]byte(yubicoPIVCAPEM))
-	if b == nil {
+// Yubikeys manufactured sometime in 2018 and prior to mid-2017
+// were certified using the U2F root CA with serial number 457200631
+// See https://github.com/Yubico/developers.yubico.com/pull/392/commits/a58f1003f003e04fc9baf09cad9f64f0c284fd47
+// Cert available at https://developers.yubico.com/U2F/yubico-u2f-ca-certs.txt
+const yubicoPIVCAPEMU2F = `-----BEGIN CERTIFICATE-----
+MIIDHjCCAgagAwIBAgIEG0BT9zANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZ
+dWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAw
+MDBaGA8yMDUwMDkwNDAwMDAwMFowLjEsMCoGA1UEAxMjWXViaWNvIFUyRiBSb290
+IENBIFNlcmlhbCA0NTcyMDA2MzEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQC/jwYuhBVlqaiYWEMsrWFisgJ+PtM91eSrpI4TK7U53mwCIawSDHy8vUmk
+5N2KAj9abvT9NP5SMS1hQi3usxoYGonXQgfO6ZXyUA9a+KAkqdFnBnlyugSeCOep
+8EdZFfsaRFtMjkwz5Gcz2Py4vIYvCdMHPtwaz0bVuzneueIEz6TnQjE63Rdt2zbw
+nebwTG5ZybeWSwbzy+BJ34ZHcUhPAY89yJQXuE0IzMZFcEBbPNRbWECRKgjq//qT
+9nmDOFVlSRCt2wiqPSzluwn+v+suQEBsUjTGMEd25tKXXTkNW21wIWbxeSyUoTXw
+LvGS6xlwQSgNpk2qXYwf8iXg7VWZAgMBAAGjQjBAMB0GA1UdDgQWBBQgIvz0bNGJ
+hjgpToksyKpP9xv9oDAPBgNVHRMECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAN
+BgkqhkiG9w0BAQsFAAOCAQEAjvjuOMDSa+JXFCLyBKsycXtBVZsJ4Ue3LbaEsPY4
+MYN/hIQ5ZM5p7EjfcnMG4CtYkNsfNHc0AhBLdq45rnT87q/6O3vUEtNMafbhU6kt
+hX7Y+9XFN9NpmYxr+ekVY5xOxi8h9JDIgoMP4VB1uS0aunL1IGqrNooL9mmFnL2k
+LVVee6/VR6C5+KSTCMCWppMuJIZII2v9o4dkoZ8Y7QRjQlLfYzd3qGtKbw7xaF1U
+sG/5xUb/Btwb2X2g4InpiB/yt/3CpQXpiWX/K4mBvUKiGn05ZsqeY1gx4g0xLBqc
+U9psmyPzK+Vsgw2jeRQ5JlKDyqE0hebfC1tvFu0CCrJFcw==
+-----END CERTIFICATE-----`
+
+func yubicoCAs() (*x509.CertPool, error) {
+	certPool := x509.NewCertPool()
+
+	if !certPool.AppendCertsFromPEM([]byte(yubicoPIVCAPEMAfter2018)) {
+		return nil, fmt.Errorf("failed to parse yubico cert")
+	}
+
+	bU2F, _ := pem.Decode([]byte(yubicoPIVCAPEMU2F))
+	if bU2F == nil {
 		return nil, fmt.Errorf("failed to decode yubico pem data")
 	}
-	return x509.ParseCertificate(b.Bytes)
+
+	certU2F, err := x509.ParseCertificate(bU2F.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse yubico cert: %v", err)
+	}
+
+	// The U2F root cert has pathlen x509 basic constraint set to 0.
+	// As per RFC 5280 this means that no intermediate cert is allowed
+	// in the validation path. This isn't really helpful since we do
+	// want to use the device attestation cert as intermediate cert in
+	// the chain. To make this work, set pathlen of the U2F root to 1.
+	//
+	// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9
+	certU2F.MaxPathLen = 1
+	certPool.AddCert(certU2F)
+
+	return certPool, nil
 }
 
 // Slot combinations pre-defined by this package.

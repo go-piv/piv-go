@@ -25,6 +25,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
@@ -892,6 +893,71 @@ func TestParseSlot(t *testing.T) {
 
 			if slot != test.slot {
 				t.Errorf("returned slot %+v did not match expected %+v", slot, test.slot)
+			}
+		})
+	}
+}
+
+func TestVerify(t *testing.T) {
+	tests := []struct {
+		name       string
+		deviceCert string
+		keyCert    string
+		ok         bool
+	}{
+		{
+			// Valid attestation chain from a recent YubiKey.
+			name:       "ValidChain",
+			deviceCert: "-----BEGIN CERTIFICATE-----\nMIIC+jCCAeKgAwIBAgIJAKs/UIpBjg1uMA0GCSqGSIb3DQEBCwUAMCsxKTAnBgNV\nBAMMIFl1YmljbyBQSVYgUm9vdCBDQSBTZXJpYWwgMjYzNzUxMCAXDTE2MDMxNDAw\nMDAwMFoYDzIwNTIwNDE3MDAwMDAwWjAhMR8wHQYDVQQDDBZZdWJpY28gUElWIEF0\ndGVzdGF0aW9uMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0zdJWGnk\naLE8Rb+TP7iSffhJV9SJEp2Me4QcfVidgHqyIdo0lruBk69RF1nrmS3i+G1yyUh/\nymAPZkcQCpms0E23Dmhue1VRpBedcsVtO/xSrfu0qAWTslp/k57ry6vkidrQU1cx\nl2KodH3KTmnZmaskQD8eGtxXwcmLOmhKem6GSqhN/3QznaDhZmVUAvUKSOaIzOxn\n2u1mDHhGwaHhR7dklsDwN7oni4WWX1GJXtzpB8j6JhoqyqXwSbq+ck54PfzUoOFd\n/2yKyFRDXnQvzbNL7+afbxBQQMxxo1e24DNE/cp+K09eT7Gh1Urao6meaSssN4aV\nFfmkhC2NapGKMQIDAQABoykwJzARBgorBgEEAYLECgMDBAMFBAMwEgYDVR0TAQH/\nBAgwBgEB/wIBADANBgkqhkiG9w0BAQsFAAOCAQEAJfOLOQYGyIMQ5y+sDkYz+e6G\nH8BqqiYL9VOC3U3KQX9mrtZnaIexqJOCQyCFOSvaTFJvOfNiCCKQuLbmS+Qn4znd\nnSitCsdJSFKskQP7hbXqUK01epb6iTuuko4w3V57YVudnniZBD2s4XoNcJ6BFizZ\n3iXQqRMaLVfFHS9Qx0iLZLcR2s29nIl6NI/qFdIgkyo07J5cPnBiD6wxQft8FdfR\nbgx9yrrjY0mvj/k5LRN6lab8lTolgI5luJtKNueq96LVkTkAzcCaJPQ9YQ4cxeU9\nOapsEeOk6xf5bRPtdf0WhEKthXywt9D0pSHhAI+fpLNe/VtlZpt3hn9aTbqSug==\n-----END CERTIFICATE-----\n",
+			keyCert:    "-----BEGIN CERTIFICATE-----\nMIICVTCCAT2gAwIBAgIQAU4Yg7Qnw9FZgMBEaJ7ZMzANBgkqhkiG9w0BAQsFADAh\nMR8wHQYDVQQDDBZZdWJpY28gUElWIEF0dGVzdGF0aW9uMCAXDTE2MDMxNDAwMDAw\nMFoYDzIwNTIwNDE3MDAwMDAwWjAlMSMwIQYDVQQDDBpZdWJpS2V5IFBJViBBdHRl\nc3RhdGlvbiA5YTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABATzM3sJuwemL2Ha\nHkGIzmCVjUMreNIVrRLOvnbZjoVflk1eab/iLUlKzk/2jXTu9TISRg2dhyXcutct\nvnqr66yjTjBMMBEGCisGAQQBgsQKAwMEAwUEAzAUBgorBgEEAYLECgMHBAYCBADw\nDxQwEAYKKwYBBAGCxAoDCAQCAgEwDwYKKwYBBAGCxAoDCQQBBDANBgkqhkiG9w0B\nAQsFAAOCAQEAFX0hL5gi/g4ZM7vCH5kDAtma7eBp0LpbCzR313GGyBR7pJFtuj2l\nbWU+V3SFRihXBTDb8q+uvyCBqgz1szdZzrpfjqNkhEPfPNabxjxJxVoe6Gdcn115\naduxfqqT2u+YIsERzaIIIisehLQkc/5zLkpocA6jbKBZnZWUBJIxuz4QmYTIf0O4\nHPE2o4JbAyGx/hRaqVvDgNeAz94ZFjb4Mp3RNbbdRUZB0ehrT/IGRJoHRu2HKFGM\nylRJL2kjKPoEc4XHbCu+MfmAIrQ4Xseg85zyI7ThhYvAzktdLHhQyfYr4wrrLCN3\noeTzmiqIHe9AataJXQ+mEQEEc9TNY23RFg==\n-----END CERTIFICATE-----\n",
+			ok:         true,
+		},
+		{
+			// Valid attestation chain from a yubikey manufactured in 2018 showing a manufacture bug (device certified using U2F root, and device cert does not encode X509 basic constraints).
+			name:       "ValidChain2018",
+			deviceCert: "-----BEGIN CERTIFICATE-----\nMIIC6TCCAdGgAwIBAgIJALvwZFDESwMlMA0GCSqGSIb3DQEBCwUAMC4xLDAqBgNV\nBAMTI1l1YmljbyBVMkYgUm9vdCBDQSBTZXJpYWwgNDU3MjAwNjMxMCAXDTE0MDgw\nMTAwMDAwMFoYDzIwNTAwOTA0MDAwMDAwWjAhMR8wHQYDVQQDDBZZdWJpY28gUElW\nIEF0dGVzdGF0aW9uMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqXnZ\n+lxX0nNzy3jn+lrZ+1cHTVUNYVKPqGTjvRw/7XOEnInWC1VCPJqwHYtnnoH4EIXN\n7kDGXwInfs9pwyjpgQw/V23yywFtUhaR8Xgw8zqC/YfJpeK4PetJ9/k+xFbICuX7\nWDv/k5Wth3VZSaVjm/tunWajtt3OLOQQaMSoLqP41XAHHuCyzfCwJ2Vsa2FyCINF\nyG6XobokeICDRnH44POqudcLVIDvZLQqu2LF+mZd+OO5nqmTa68kkwRf/m93eOJP\no7GvYtQSp7CPJC7ks2gl8U7wuT9DQT5/0wqkoEyLZg/KLUlzgXjMa+7GtCLTC1Ku\nOh9vw02f4K44RW4nWwIDAQABoxUwEzARBgorBgEEAYLECgMDBAMEAwcwDQYJKoZI\nhvcNAQELBQADggEBAHD/uXqNgCYywj2ee7s7kix2TT4XN9OIn0fTNh5LEiUN+q7U\nzJc9q7b5WD7PfaG6UNyuaSnLaq+dLOCJ4bX4h+/MwQSndQg0epMra1ThVQZkMkGa\nktAJ5JT6j9qxNxD1RWMl91e4JwtGzFyDwFyyUGnSwhMsqMdwfBsmTpvgxmAD/NMs\nkWB/m91FV9D+UBqsZRoLoc44kEFYBZ09ypTsR699oJRsBfG0AqVYyK7rnG6663fF\nGUSWk7noVdUPXedlwXCqCymCsVheoss9qF1cffaFIl9RxGvVvCFybx0LGiYDxfgv\n80yGZIY/mAqZVDWyHZSs4f6kWK9GeLKU2Y9yby4=\n-----END CERTIFICATE-----\n",
+			keyCert:    "-----BEGIN CERTIFICATE-----\nMIICLzCCARegAwIBAgIRAIxiihk4fSKK6keqJYujvnkwDQYJKoZIhvcNAQELBQAw\nITEfMB0GA1UEAwwWWXViaWNvIFBJViBBdHRlc3RhdGlvbjAgFw0xNDA4MDEwMDAw\nMDBaGA8yMDUwMDkwNDAwMDAwMFowJTEjMCEGA1UEAwwaWXViaUtleSBQSVYgQXR0\nZXN0YXRpb24gOWEwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATHEzJsrhTHuvsx\n685AiWsAuT8Poe/zQfDRZNfpUSzJ31v6MZ9nz70pNrdd/sbG7O1UA6ceWhq1jHTU\n96Dnp99voycwJTARBgorBgEEAYLECgMDBAMEAwcwEAYKKwYBBAGCxAoDCAQCAgEw\nDQYJKoZIhvcNAQELBQADggEBADoswZ1LJ5GYVNgtRE0+zMQkAzam8YqeKmIDHtir\nvolIpGtJHzgCG2SdJlR/KnjRWF/1i8TRMhQ0O/KgkIEh+IyhJtD7DojgWvIBsCnX\nJXF7EPQMy17l7/9940QSOnQRIDb+z0eq9ACAjC3FWzqeR5VgN4C1QpCw7gKgqLTs\npmmDHHg4HsKl0PsPwim0bYIqEHttrLjPQiPnoa3qixzNKbwJjXb4/f/dvCTx9dRP\n0FVABj5Yh8f728xzrzw2nLZ9X/c0GoXfKu9s7lGNLcZ5OO+zys1ATei2h/PFJLDH\nAdrenw31WOYRtdjcNBKyAk80ajryjTAX3GXfbKpkdVB9hEo=\n-----END CERTIFICATE-----\n",
+			ok:         true,
+		},
+		{
+			// Invalid attestation chain. Device cert from yubikey A, key cert from yubikey B.
+			name:       "InvalidChain",
+			deviceCert: "-----BEGIN CERTIFICATE-----\nMIIC+jCCAeKgAwIBAgIJAKs/UIpBjg1uMA0GCSqGSIb3DQEBCwUAMCsxKTAnBgNV\nBAMMIFl1YmljbyBQSVYgUm9vdCBDQSBTZXJpYWwgMjYzNzUxMCAXDTE2MDMxNDAw\nMDAwMFoYDzIwNTIwNDE3MDAwMDAwWjAhMR8wHQYDVQQDDBZZdWJpY28gUElWIEF0\ndGVzdGF0aW9uMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0zdJWGnk\naLE8Rb+TP7iSffhJV9SJEp2Me4QcfVidgHqyIdo0lruBk69RF1nrmS3i+G1yyUh/\nymAPZkcQCpms0E23Dmhue1VRpBedcsVtO/xSrfu0qAWTslp/k57ry6vkidrQU1cx\nl2KodH3KTmnZmaskQD8eGtxXwcmLOmhKem6GSqhN/3QznaDhZmVUAvUKSOaIzOxn\n2u1mDHhGwaHhR7dklsDwN7oni4WWX1GJXtzpB8j6JhoqyqXwSbq+ck54PfzUoOFd\n/2yKyFRDXnQvzbNL7+afbxBQQMxxo1e24DNE/cp+K09eT7Gh1Urao6meaSssN4aV\nFfmkhC2NapGKMQIDAQABoykwJzARBgorBgEEAYLECgMDBAMFBAMwEgYDVR0TAQH/\nBAgwBgEB/wIBADANBgkqhkiG9w0BAQsFAAOCAQEAJfOLOQYGyIMQ5y+sDkYz+e6G\nH8BqqiYL9VOC3U3KQX9mrtZnaIexqJOCQyCFOSvaTFJvOfNiCCKQuLbmS+Qn4znd\nnSitCsdJSFKskQP7hbXqUK01epb6iTuuko4w3V57YVudnniZBD2s4XoNcJ6BFizZ\n3iXQqRMaLVfFHS9Qx0iLZLcR2s29nIl6NI/qFdIgkyo07J5cPnBiD6wxQft8FdfR\nbgx9yrrjY0mvj/k5LRN6lab8lTolgI5luJtKNueq96LVkTkAzcCaJPQ9YQ4cxeU9\nOapsEeOk6xf5bRPtdf0WhEKthXywt9D0pSHhAI+fpLNe/VtlZpt3hn9aTbqSug==\n-----END CERTIFICATE-----\n",
+			keyCert:    "-----BEGIN CERTIFICATE-----\nMIICLzCCARegAwIBAgIRAIxiihk4fSKK6keqJYujvnkwDQYJKoZIhvcNAQELBQAw\nITEfMB0GA1UEAwwWWXViaWNvIFBJViBBdHRlc3RhdGlvbjAgFw0xNDA4MDEwMDAw\nMDBaGA8yMDUwMDkwNDAwMDAwMFowJTEjMCEGA1UEAwwaWXViaUtleSBQSVYgQXR0\nZXN0YXRpb24gOWEwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATHEzJsrhTHuvsx\n685AiWsAuT8Poe/zQfDRZNfpUSzJ31v6MZ9nz70pNrdd/sbG7O1UA6ceWhq1jHTU\n96Dnp99voycwJTARBgorBgEEAYLECgMDBAMEAwcwEAYKKwYBBAGCxAoDCAQCAgEw\nDQYJKoZIhvcNAQELBQADggEBADoswZ1LJ5GYVNgtRE0+zMQkAzam8YqeKmIDHtir\nvolIpGtJHzgCG2SdJlR/KnjRWF/1i8TRMhQ0O/KgkIEh+IyhJtD7DojgWvIBsCnX\nJXF7EPQMy17l7/9940QSOnQRIDb+z0eq9ACAjC3FWzqeR5VgN4C1QpCw7gKgqLTs\npmmDHHg4HsKl0PsPwim0bYIqEHttrLjPQiPnoa3qixzNKbwJjXb4/f/dvCTx9dRP\n0FVABj5Yh8f728xzrzw2nLZ9X/c0GoXfKu9s7lGNLcZ5OO+zys1ATei2h/PFJLDH\nAdrenw31WOYRtdjcNBKyAk80ajryjTAX3GXfbKpkdVB9hEo=\n-----END CERTIFICATE-----\n",
+			ok:         false,
+		},
+		{
+			// Invalid attestation chain. Device cert from yubikey B, key cert from yubikey A.
+			name:       "InvalidChain2",
+			deviceCert: "-----BEGIN CERTIFICATE-----\nMIIC6TCCAdGgAwIBAgIJALvwZFDESwMlMA0GCSqGSIb3DQEBCwUAMC4xLDAqBgNV\nBAMTI1l1YmljbyBVMkYgUm9vdCBDQSBTZXJpYWwgNDU3MjAwNjMxMCAXDTE0MDgw\nMTAwMDAwMFoYDzIwNTAwOTA0MDAwMDAwWjAhMR8wHQYDVQQDDBZZdWJpY28gUElW\nIEF0dGVzdGF0aW9uMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqXnZ\n+lxX0nNzy3jn+lrZ+1cHTVUNYVKPqGTjvRw/7XOEnInWC1VCPJqwHYtnnoH4EIXN\n7kDGXwInfs9pwyjpgQw/V23yywFtUhaR8Xgw8zqC/YfJpeK4PetJ9/k+xFbICuX7\nWDv/k5Wth3VZSaVjm/tunWajtt3OLOQQaMSoLqP41XAHHuCyzfCwJ2Vsa2FyCINF\nyG6XobokeICDRnH44POqudcLVIDvZLQqu2LF+mZd+OO5nqmTa68kkwRf/m93eOJP\no7GvYtQSp7CPJC7ks2gl8U7wuT9DQT5/0wqkoEyLZg/KLUlzgXjMa+7GtCLTC1Ku\nOh9vw02f4K44RW4nWwIDAQABoxUwEzARBgorBgEEAYLECgMDBAMEAwcwDQYJKoZI\nhvcNAQELBQADggEBAHD/uXqNgCYywj2ee7s7kix2TT4XN9OIn0fTNh5LEiUN+q7U\nzJc9q7b5WD7PfaG6UNyuaSnLaq+dLOCJ4bX4h+/MwQSndQg0epMra1ThVQZkMkGa\nktAJ5JT6j9qxNxD1RWMl91e4JwtGzFyDwFyyUGnSwhMsqMdwfBsmTpvgxmAD/NMs\nkWB/m91FV9D+UBqsZRoLoc44kEFYBZ09ypTsR699oJRsBfG0AqVYyK7rnG6663fF\nGUSWk7noVdUPXedlwXCqCymCsVheoss9qF1cffaFIl9RxGvVvCFybx0LGiYDxfgv\n80yGZIY/mAqZVDWyHZSs4f6kWK9GeLKU2Y9yby4=\n-----END CERTIFICATE-----\n",
+			keyCert:    "-----BEGIN CERTIFICATE-----\nMIICVTCCAT2gAwIBAgIQAU4Yg7Qnw9FZgMBEaJ7ZMzANBgkqhkiG9w0BAQsFADAh\nMR8wHQYDVQQDDBZZdWJpY28gUElWIEF0dGVzdGF0aW9uMCAXDTE2MDMxNDAwMDAw\nMFoYDzIwNTIwNDE3MDAwMDAwWjAlMSMwIQYDVQQDDBpZdWJpS2V5IFBJViBBdHRl\nc3RhdGlvbiA5YTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABATzM3sJuwemL2Ha\nHkGIzmCVjUMreNIVrRLOvnbZjoVflk1eab/iLUlKzk/2jXTu9TISRg2dhyXcutct\nvnqr66yjTjBMMBEGCisGAQQBgsQKAwMEAwUEAzAUBgorBgEEAYLECgMHBAYCBADw\nDxQwEAYKKwYBBAGCxAoDCAQCAgEwDwYKKwYBBAGCxAoDCQQBBDANBgkqhkiG9w0B\nAQsFAAOCAQEAFX0hL5gi/g4ZM7vCH5kDAtma7eBp0LpbCzR313GGyBR7pJFtuj2l\nbWU+V3SFRihXBTDb8q+uvyCBqgz1szdZzrpfjqNkhEPfPNabxjxJxVoe6Gdcn115\naduxfqqT2u+YIsERzaIIIisehLQkc/5zLkpocA6jbKBZnZWUBJIxuz4QmYTIf0O4\nHPE2o4JbAyGx/hRaqVvDgNeAz94ZFjb4Mp3RNbbdRUZB0ehrT/IGRJoHRu2HKFGM\nylRJL2kjKPoEc4XHbCu+MfmAIrQ4Xseg85zyI7ThhYvAzktdLHhQyfYr4wrrLCN3\noeTzmiqIHe9AataJXQ+mEQEEc9TNY23RFg==\n-----END CERTIFICATE-----\n",
+			ok:         false,
+		},
+	}
+
+	parseCert := func(cert string) (*x509.Certificate, error) {
+		block, _ := pem.Decode([]byte(cert))
+		if block == nil {
+			t.Fatalf("decoding PEM cert, empty block")
+		}
+		return x509.ParseCertificate(block.Bytes)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deviceCert, err := parseCert(test.deviceCert)
+			if err != nil {
+				t.Fatalf("parsing device cert: %v", err)
+			}
+
+			keyCert, err := parseCert(test.keyCert)
+			if err != nil {
+				t.Fatalf("parsing key cert: %v", err)
+			}
+
+			_, err = Verify(deviceCert, keyCert)
+			if (err == nil) != test.ok {
+				t.Errorf("Verify returned %v, expected test outcome %v", err, test.ok)
 			}
 		})
 	}
