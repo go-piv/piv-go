@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC
+// Copyright 2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,21 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build cgo,!pcscgo
+// +build armbe arm64be ppc64 mips mips64 mips64p32 ppc sparc sparc64 s390 s390x
 
-package piv
+package pcsc
 
-import "C"
+import "encoding/binary"
 
-// Return codes for PCSC are different on different platforms (int vs. long).
-
-func scCheck(rc C.long) error {
-	if rc == rcSuccess {
-		return nil
-	}
-	return &scErr{int64(rc)}
-}
-
-func isRCNoReaders(rc C.long) bool {
-	return C.ulong(rc) == 0x8010002E
+func init() {
+	nativeByteOrder = binary.BigEndian
 }
