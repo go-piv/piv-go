@@ -29,7 +29,12 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"sync"
 )
+
+//lockSigning will support concurrent sign and public key functions, 
+// this will help us to scale TLS clients
+var lockSigningAlgo = &sync.Mutex{}
 
 // errMismatchingAlgorithms is returned when a cryptographic operation
 // is given keys using different algorithms.
@@ -870,6 +875,8 @@ var _ crypto.Signer = (*ECDSAPrivateKey)(nil)
 
 // Sign implements crypto.Signer.
 func (k *ECDSAPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	lockSigning.Lock
+	defer lockSigning.Unlock()
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykSignECDSA(tx, k.slot, k.pub, digest)
 	})
@@ -940,6 +947,8 @@ func (k *keyEd25519) Public() crypto.PublicKey {
 }
 
 func (k *keyEd25519) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	lockSigning.Lock
+	defer lockSigning.Unlock()
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return skSignEd25519(tx, k.slot, k.pub, digest)
 	})
@@ -958,6 +967,8 @@ func (k *keyRSA) Public() crypto.PublicKey {
 }
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	lockSigning.Lock
+	defer lockSigning.Unlock()
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		return ykSignRSA(tx, k.slot, k.pub, digest, opts)
 	})
