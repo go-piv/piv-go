@@ -76,16 +76,47 @@ type Version struct {
 }
 
 // Formfactor enumerates the physical set of forms a key can take. USB-A vs.
-// USB-C and Keychain vs. Nano.
+// USB-C and Keychain vs. Nano (and FIPS variants for these).
 type Formfactor int
 
-// Formfactors recognized by this package.
+// The mapping between known Formfactor values and their descriptions.
+var formFactorStrings = map[Formfactor]string{
+	FormfactorUSBAKeychain:          "USB-A Keychain",
+	FormfactorUSBANano:              "USB-A Nano",
+	FormfactorUSBCKeychain:          "USB-C Keychain",
+	FormfactorUSBCNano:              "USB-C Nano",
+	FormfactorUSBCLightningKeychain: "USB-C/Lightning Keychain",
+
+	FormfactorUSBAKeychainFIPS:          "USB-A Keychain FIPS",
+	FormfactorUSBANanoFIPS:              "USB-A Nano FIPS",
+	FormfactorUSBCKeychainFIPS:          "USB-C Keychain FIPS",
+	FormfactorUSBCNanoFIPS:              "USB-C Nano FIPS",
+	FormfactorUSBCLightningKeychainFIPS: "USB-C/Lightning Keychain FIPS",
+}
+
+// String returns the human-readable description for the given form-factor
+// value, or a fallback value for any other, unknown form-factor.
+func (f Formfactor) String() string {
+	if s, ok := formFactorStrings[f]; ok {
+		return s
+	}
+	return fmt.Sprintf("unknown(0x%02x)", int(f))
+}
+
+// Formfactors recognized by this package. See the reference for more information:
+// https://developers.yubico.com/yubikey-manager/Config_Reference.html#_form_factor
 const (
-	FormfactorUSBAKeychain = iota + 1
-	FormfactorUSBANano
-	FormfactorUSBCKeychain
-	FormfactorUSBCNano
-	FormfactorUSBCLightningKeychain
+	FormfactorUSBAKeychain          = 0x1
+	FormfactorUSBANano              = 0x2
+	FormfactorUSBCKeychain          = 0x3
+	FormfactorUSBCNano              = 0x4
+	FormfactorUSBCLightningKeychain = 0x5
+
+	FormfactorUSBAKeychainFIPS          = 0x81
+	FormfactorUSBANanoFIPS              = 0x82
+	FormfactorUSBCKeychainFIPS          = 0x83
+	FormfactorUSBCNanoFIPS              = 0x84
+	FormfactorUSBCLightningKeychainFIPS = 0x85
 )
 
 // Prefix in the x509 Subject Common Name for YubiKey attestations
@@ -163,20 +194,7 @@ func (a *Attestation) addExt(e pkix.Extension) error {
 		if len(e.Value) != 1 {
 			return fmt.Errorf("expected 1 byte from formfactor, got: %d", len(e.Value))
 		}
-		switch e.Value[0] {
-		case 0x01:
-			a.Formfactor = FormfactorUSBAKeychain
-		case 0x02:
-			a.Formfactor = FormfactorUSBANano
-		case 0x03:
-			a.Formfactor = FormfactorUSBCKeychain
-		case 0x04:
-			a.Formfactor = FormfactorUSBCNano
-		case 0x05:
-			a.Formfactor = FormfactorUSBCLightningKeychain
-		default:
-			return fmt.Errorf("unrecognized formfactor: 0x%x", e.Value[0])
-		}
+		a.Formfactor = Formfactor(e.Value[0])
 	}
 	return nil
 }
