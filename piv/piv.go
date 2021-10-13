@@ -133,7 +133,7 @@ type clientConfigOpts struct {
 // ClientConfigOpt configures a specific option
 type ClientConfigOpt func(*clientConfigOpts)
 
-// WithSharedAccess configures PIV card to used in shared by multiple processes
+// WithSharedAccess configures PIV card to be shared by multiple processes
 func WithSharedAccess() ClientConfigOpt {
 	return func(o *clientConfigOpts) {
 		o.shared = true
