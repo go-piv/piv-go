@@ -172,7 +172,7 @@ func (c *client) Cards() ([]string, error) {
 	return ctx.ListReaders()
 }
 
-func (c *client) Open(card string, opts ...ClientConfigOpt ) (*YubiKey, error) {
+func (c *client) Open(card string, opts ...ClientConfigOpt) (*YubiKey, error) {
 	ctx, err := newSCContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
