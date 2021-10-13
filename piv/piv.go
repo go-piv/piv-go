@@ -178,6 +178,10 @@ func (c *client) Open(card string) (*YubiKey, error) {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
 	}
 
+	if c.opts.shared {
+		ctx.SetShared()
+	}
+
 	h, err := ctx.Connect(card)
 	if err != nil {
 		ctx.Close()
