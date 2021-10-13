@@ -124,9 +124,26 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
+// clientConfigOpts holds options for creating a new ClientConfigOpt.
+type clientConfigOpts struct {
+	// configure shared access to PIV hardware
+	shared bool
+}
+
+// ClientConfigOpt configures a specific option
+type ClientConfigOpt func(*clientConfigOpts)
+
+// WithSharedAccess configures PIV card to used in shared by multiple processes
+func WithSharedAccess() ClientConfigOpt {
+	return func(o *clientConfigOpts) {
+		o.shared = true
+	}
+}
+
 // Open connects to a YubiKey smart card.
-func Open(card string) (*YubiKey, error) {
+func Open(card string, opts ...ClientConfigOpt) (*YubiKey, error) {
 	var c client
+	c.setConfigOpts(opts...)
 	return c.Open(card)
 }
 
@@ -137,6 +154,13 @@ type client struct {
 	//
 	// If nil, defaults to crypto.Rand.
 	Rand io.Reader
+	opts clientConfigOpts
+}
+
+func (c *client) setConfigOpts(opts ...ClientConfigOpt) {
+	for _, v := range opts {
+		v(&c.opts)
+	}
 }
 
 func (c *client) Cards() ([]string, error) {

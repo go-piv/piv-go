@@ -38,7 +38,8 @@ import (
 const rcSuccess = C.SCARD_S_SUCCESS
 
 type scContext struct {
-	ctx C.SCARDCONTEXT
+	ctx    C.SCARDCONTEXT
+	shared bool
 }
 
 func newSCContext() (*scContext, error) {
@@ -52,6 +53,10 @@ func newSCContext() (*scContext, error) {
 
 func (c *scContext) Close() error {
 	return scCheck(C.SCardReleaseContext(c.ctx))
+}
+
+func (c *scContext) SetShared() {
+	c.shared = true
 }
 
 func (c *scContext) ListReaders() ([]string, error) {
@@ -93,8 +98,12 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		handle         C.SCARDHANDLE
 		activeProtocol C.DWORD
 	)
+	opt := C.SCARD_SHARE_EXCLUSIVE
+	if c.shared {
+		opt = C.SCARD_SHARE_SHARED
+	}
 	rc := C.SCardConnect(c.ctx, C.CString(reader),
-		C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
+		C.uint(opt), C.SCARD_PROTOCOL_T1,
 		&handle, &activeProtocol)
 	if err := scCheck(rc); err != nil {
 		return nil, err
