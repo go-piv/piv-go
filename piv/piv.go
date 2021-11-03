@@ -135,6 +135,8 @@ type Client struct {
 	Shared bool
 }
 
+
+// Open method can be put to use for opening a smart-card with shared access.
 func (cl *Client) Open(card string) (*YubiKey, error) {
 	var c client
 	return c.Open(card, cl.Shared)
