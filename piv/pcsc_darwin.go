@@ -14,6 +14,14 @@
 
 package piv
 
+// #cgo darwin LDFLAGS: -framework PCSC
+// #cgo linux pkg-config: libpcsclite
+// #cgo freebsd CFLAGS: -I/usr/local/include/
+// #cgo freebsd CFLAGS: -I/usr/local/include/PCSC
+// #cgo freebsd LDFLAGS: -L/usr/local/lib/
+// #cgo freebsd LDFLAGS: -lpcsclite
+// #include <PCSC/winscard.h>
+// #include <PCSC/wintypes.h>
 import "C"
 
 func scCheck(rc C.int) error {
@@ -35,4 +43,22 @@ func isRCNoReaders(rc C.int) bool {
 	// MacOS does the right thing and doesn't return an error if no smart cards
 	// are available.
 	return false
+}
+
+func (c *scContext) Connect(reader string) (*scHandle, error) {
+	var (
+		handle         C.SCARDHANDLE
+		activeProtocol C.DWORD
+	)
+	opt := C.SCARD_SHARE_EXCLUSIVE
+	if c.shared {
+		opt = C.SCARD_SHARE_SHARED
+	}
+	rc := C.SCardConnect(c.ctx, C.CString(reader),
+		C.uint(opt), C.SCARD_PROTOCOL_T1,
+		&handle, &activeProtocol)
+	if err := scCheck(rc); err != nil {
+		return nil, err
+	}
+	return &scHandle{handle}, nil
 }

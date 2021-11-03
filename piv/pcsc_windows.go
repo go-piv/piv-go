@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"syscall"
 	"unsafe"
+	"C"
 )
 
 var (

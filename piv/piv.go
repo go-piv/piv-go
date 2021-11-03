@@ -124,27 +124,26 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
-// clientConfigOpts holds options for creating a new ClientConfigOpt.
-type clientConfigOpts struct {
-	// configure shared access to PIV hardware
-	shared bool
+// Client provides configuration options when connection to the smart card.
+type Client struct {
+	// Shared enables a non-exclusive connection to the PIV application, allowing
+	// other applications that also request a non-exclusive connection to connect
+	// at the same time.
+	//
+	// Certain features, such as cached PINs, don't work when this feature is enabled.
+	// It's also common for other applications to require exclusive connections.
+	Shared bool
 }
 
-// ClientConfigOpt configures a specific option
-type ClientConfigOpt func(*clientConfigOpts)
-
-// WithSharedAccess configures PIV card to be shared by multiple processes
-func WithSharedAccess() ClientConfigOpt {
-	return func(o *clientConfigOpts) {
-		o.shared = true
-	}
+func (cl *Client) Open(card string) (*YubiKey, error) {
+	var c client
+	return c.Open(card, cl.Shared)
 }
 
 // Open connects to a YubiKey smart card.
-func Open(card string, opts ...ClientConfigOpt) (*YubiKey, error) {
+func Open(card string) (*YubiKey, error) {
 	var c client
-	c.setConfigOpts(opts...)
-	return c.Open(card)
+	return c.Open(card, false)
 }
 
 // client is a smart card client and may be exported in the future to allow
@@ -154,17 +153,10 @@ type client struct {
 	//
 	// If nil, defaults to crypto.Rand.
 	Rand io.Reader
-	opts clientConfigOpts
-}
-
-func (c *client) setConfigOpts(opts ...ClientConfigOpt) {
-	for _, v := range opts {
-		v(&c.opts)
-	}
 }
 
 func (c *client) Cards() ([]string, error) {
-	ctx, err := newSCContext()
+	ctx, err := newSCContext(true)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pscs: %w", err)
 	}
@@ -172,14 +164,10 @@ func (c *client) Cards() ([]string, error) {
 	return ctx.ListReaders()
 }
 
-func (c *client) Open(card string, opts ...ClientConfigOpt) (*YubiKey, error) {
-	ctx, err := newSCContext()
+func (c *client) Open(card string, shared bool) (*YubiKey, error) {
+	ctx, err := newSCContext(shared)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
-	}
-
-	if c.opts.shared {
-		ctx.SetShared()
 	}
 
 	h, err := ctx.Connect(card)

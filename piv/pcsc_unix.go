@@ -42,21 +42,17 @@ type scContext struct {
 	shared bool
 }
 
-func newSCContext() (*scContext, error) {
+func newSCContext(shared bool) (*scContext, error) {
 	var ctx C.SCARDCONTEXT
 	rc := C.SCardEstablishContext(C.SCARD_SCOPE_SYSTEM, nil, nil, &ctx)
 	if err := scCheck(rc); err != nil {
 		return nil, err
 	}
-	return &scContext{ctx: ctx}, nil
+	return &scContext{ctx: ctx, shared: shared}, nil
 }
 
 func (c *scContext) Close() error {
 	return scCheck(C.SCardReleaseContext(c.ctx))
-}
-
-func (c *scContext) SetShared() {
-	c.shared = true
 }
 
 func (c *scContext) ListReaders() ([]string, error) {
@@ -92,7 +88,7 @@ func (c *scContext) ListReaders() ([]string, error) {
 type scHandle struct {
 	h C.SCARDHANDLE
 }
-
+/*
 func (c *scContext) Connect(reader string) (*scHandle, error) {
 	var (
 		handle         C.SCARDHANDLE
@@ -109,7 +105,7 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		return nil, err
 	}
 	return &scHandle{handle}, nil
-}
+}*/
 
 func (h *scHandle) Close() error {
 	return scCheck(C.SCardDisconnect(h.h, C.SCARD_LEAVE_CARD))
