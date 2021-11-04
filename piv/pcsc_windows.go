@@ -15,10 +15,10 @@
 package piv
 
 import (
+	"C"
 	"fmt"
 	"syscall"
 	"unsafe"
-	"C"
 )
 
 var (
@@ -60,7 +60,7 @@ type scContext struct {
 	shared bool
 }
 
-func newSCContext() (*scContext, error) {
+func newSCContext(shared bool) (*scContext, error) {
 	var ctx syscall.Handle
 
 	r0, _, _ := procSCardEstablishContext.Call(
@@ -72,11 +72,7 @@ func newSCContext() (*scContext, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scContext{ctx: ctx}, nil
-}
-
-func (c *scContext) SetShared() {
-	c.shared = true
+	return &scContext{ctx: ctx, shared: shared}, nil
 }
 
 func (c *scContext) Close() error {
