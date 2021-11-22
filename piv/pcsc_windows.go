@@ -139,9 +139,6 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 			uintptr(unsafe.Pointer(&handle)),
 			uintptr(activeProtocol),
 		)
-		if err := scCheck(r0); err != nil {
-			return nil, err
-		}
 	} else {
 		r0, _, _ = procSCardConnectW.Call(
 			uintptr(c.ctx),
@@ -151,11 +148,10 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 			uintptr(unsafe.Pointer(&handle)),
 			uintptr(activeProtocol),
 		)
-		if err := scCheck(r0); err != nil {
-			return nil, err
-		}
 	}
-
+	if err := scCheck(r0); err != nil {
+		return nil, err
+	}
 	return &scHandle{handle}, nil
 }
 
