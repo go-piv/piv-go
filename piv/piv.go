@@ -51,8 +51,8 @@ var (
 //
 // See: https://ludovicrousseau.blogspot.com/2010/05/what-is-in-pcsc-reader-name.html
 func Cards() ([]string, error) {
-	var c client
-	return c.Cards()
+	var c Client
+	return c.cards()
 }
 
 const (
@@ -102,7 +102,6 @@ const (
 type YubiKey struct {
 	ctx *scContext
 	h   *scHandle
-	//tx  *scTx
 
 	rand io.Reader
 
@@ -124,8 +123,14 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
-// Client provides configuration options when connection to the smart card.
+// Client is a smart card Client and may be exported in the future to allow
+// configuration for the top level Open() and Cards() APIs.
 type Client struct {
+	// Rand is a cryptographic source of randomness used for card challenges.
+	//
+	// If nil, defaults to crypto.Rand.
+	Rand io.Reader
+
 	// Shared enables a non-exclusive connection to the PIV application, allowing
 	// other applications that also request a non-exclusive connection to connect
 	// at the same time.
@@ -135,29 +140,14 @@ type Client struct {
 	Shared bool
 }
 
-// Open method can be put to use for opening a smart-card with shared access.
-func (cl *Client) Open(card string) (*YubiKey, error) {
-	var c client
-	return c.Open(card, cl.Shared)
-}
-
 // Open connects to a YubiKey smart card.
 func Open(card string) (*YubiKey, error) {
-	var c client
-	return c.Open(card, false)
+	var c Client
+	return c.Open(card)
 }
 
-// client is a smart card client and may be exported in the future to allow
-// configuration for the top level Open() and Cards() APIs.
-type client struct {
-	// Rand is a cryptographic source of randomness used for card challenges.
-	//
-	// If nil, defaults to crypto.Rand.
-	Rand io.Reader
-}
-
-func (c *client) Cards() ([]string, error) {
-	ctx, err := newSCContext(true)
+func (c *Client) cards() ([]string, error) {
+	ctx, err := newSCContext(c.Shared)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pscs: %w", err)
 	}
@@ -174,8 +164,8 @@ func (yk *YubiKey) withTx(fn func(tx *scTx) error) error {
 	return fn(tx)
 }
 
-func (c *client) Open(card string, shared bool) (*YubiKey, error) {
-	ctx, err := newSCContext(shared)
+func (c *Client) Open(card string) (*YubiKey, error) {
+	ctx, err := newSCContext(c.Shared)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
 	}
@@ -383,10 +373,8 @@ type version struct {
 // certificates to slots.
 //
 // Use DefaultManagementKey if the management key hasn't been set.
-func (yk *YubiKey) authManagementKey(key [24]byte) error {
-	return yk.withTx(func(tx *scTx) error {
-		return ykAuthenticate(tx, key, yk.rand)
-	})
+func (yk *YubiKey) authManagementKey(key [24]byte, tx *scTx) error {
+	return ykAuthenticate(tx, key, yk.rand)
 }
 
 var (

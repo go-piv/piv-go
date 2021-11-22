@@ -15,7 +15,6 @@
 package piv
 
 import (
-	"C"
 	"fmt"
 	"syscall"
 	"unsafe"
@@ -130,21 +129,33 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		handle         syscall.Handle
 		activeProtocol uint16
 	)
-	opt := scardShareExclusive
+	var r0 uintptr
 	if c.shared {
-		opt = scardShareShared
+		r0, _, _ = procSCardConnectW.Call(
+			uintptr(c.ctx),
+			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(reader))),
+			scardShareShared,
+			scardProtocolT1,
+			uintptr(unsafe.Pointer(&handle)),
+			uintptr(activeProtocol),
+		)
+		if err := scCheck(r0); err != nil {
+			return nil, err
+		}
+	} else {
+		r0, _, _ = procSCardConnectW.Call(
+			uintptr(c.ctx),
+			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(reader))),
+			scardShareExclusive,
+			scardProtocolT1,
+			uintptr(unsafe.Pointer(&handle)),
+			uintptr(activeProtocol),
+		)
+		if err := scCheck(r0); err != nil {
+			return nil, err
+		}
 	}
-	r0, _, _ := procSCardConnectW.Call(
-		uintptr(c.ctx),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(reader))),
-		C.DWORD(opt),
-		scardProtocolT1,
-		uintptr(unsafe.Pointer(&handle)),
-		uintptr(activeProtocol),
-	)
-	if err := scCheck(r0); err != nil {
-		return nil, err
-	}
+
 	return &scHandle{handle}, nil
 }
 

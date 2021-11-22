@@ -88,24 +88,31 @@ func (c *scContext) ListReaders() ([]string, error) {
 type scHandle struct {
 	h C.SCARDHANDLE
 }
-/*
+
 func (c *scContext) Connect(reader string) (*scHandle, error) {
 	var (
 		handle         C.SCARDHANDLE
 		activeProtocol C.DWORD
 	)
-	opt := C.SCARD_SHARE_EXCLUSIVE
+
 	if c.shared {
-		opt = C.SCARD_SHARE_SHARED
+		rc := C.SCardConnect(c.ctx, C.CString(reader),
+			C.SCARD_SHARE_SHARED, C.SCARD_PROTOCOL_T1,
+			&handle, &activeProtocol)
+		if err := scCheck(rc); err != nil {
+			return nil, err
+		}
+	} else {
+		rc := C.SCardConnect(c.ctx, C.CString(reader),
+			C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
+			&handle, &activeProtocol)
+		if err := scCheck(rc); err != nil {
+			return nil, err
+		}
 	}
-	rc := C.SCardConnect(c.ctx, C.CString(reader),
-		C.uint(opt), C.SCARD_PROTOCOL_T1,
-		&handle, &activeProtocol)
-	if err := scCheck(rc); err != nil {
-		return nil, err
-	}
+
 	return &scHandle{handle}, nil
-}*/
+}
 
 func (h *scHandle) Close() error {
 	return scCheck(C.SCardDisconnect(h.h, C.SCARD_LEAVE_CARD))
