@@ -225,7 +225,11 @@ func TestYubiKeyAuthenticate(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	if err := yk.authManagementKey(DefaultManagementKey); err != nil {
+	err := yk.withTx(func(tx *scTx) error {
+		return yk.authManagementKey(DefaultManagementKey, tx)
+	})
+
+	if err != nil {
 		t.Errorf("authenticating: %v", err)
 	}
 }
@@ -242,9 +246,15 @@ func TestYubiKeySetManagementKey(t *testing.T) {
 	if err := yk.SetManagementKey(DefaultManagementKey, mgmtKey); err != nil {
 		t.Fatalf("setting management key: %v", err)
 	}
-	if err := yk.authManagementKey(mgmtKey); err != nil {
+
+	err := yk.withTx(func(tx *scTx) error {
+		return yk.authManagementKey(mgmtKey, tx)
+	})
+
+	if err != nil {
 		t.Errorf("authenticating with new management key: %v", err)
 	}
+
 	if err := yk.SetManagementKey(mgmtKey, DefaultManagementKey); err != nil {
 		t.Fatalf("resetting management key: %v", err)
 	}

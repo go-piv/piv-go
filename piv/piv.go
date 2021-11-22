@@ -164,6 +164,7 @@ func (yk *YubiKey) withTx(fn func(tx *scTx) error) error {
 	return fn(tx)
 }
 
+// Open connects to a YubiKey smart card.
 func (c *Client) Open(card string) (*YubiKey, error) {
 	ctx, err := newSCContext(c.Shared)
 	if err != nil {
