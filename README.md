@@ -121,7 +121,7 @@ if err := yk.SetMetadata(newKey, m); err != nil {
 fmt.Println("Credentials set. Your PIN is: %s", newPIN)
 ```
 
-The user can user the PIN later to fetch the management key:
+The user can use the PIN later to fetch the management key:
 
 ```go
 m, err := yk.Metadata(pin)
