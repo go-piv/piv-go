@@ -158,13 +158,30 @@ func TestYubiKeyLoginNeeded(t *testing.T) {
 
 	testRequiresVersion(t, yk, 4, 3, 0)
 
-	if !ykLoginNeeded(yk.tx) {
+	var flag bool
+
+	yk.withTx(func(tx *scTx) error {
+		flag = !ykLoginNeeded(tx)
+		return nil
+	})
+
+	if flag {
 		t.Errorf("expected login needed")
 	}
-	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
+
+	err := yk.withTx(func(tx *scTx) error {
+		return ykLogin(tx, DefaultPIN)
+	})
+	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
-	if ykLoginNeeded(yk.tx) {
+
+	yk.withTx(func(tx *scTx) error {
+		flag = ykLoginNeeded(tx)
+		return nil
+	})
+
+	if flag {
 		t.Errorf("expected no login needed")
 	}
 }
@@ -208,7 +225,11 @@ func TestYubiKeyAuthenticate(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	if err := yk.authManagementKey(DefaultManagementKey); err != nil {
+	err := yk.withTx(func(tx *scTx) error {
+		return yk.authManagementKey(DefaultManagementKey, tx)
+	})
+
+	if err != nil {
 		t.Errorf("authenticating: %v", err)
 	}
 }
@@ -225,9 +246,15 @@ func TestYubiKeySetManagementKey(t *testing.T) {
 	if err := yk.SetManagementKey(DefaultManagementKey, mgmtKey); err != nil {
 		t.Fatalf("setting management key: %v", err)
 	}
-	if err := yk.authManagementKey(mgmtKey); err != nil {
+
+	err := yk.withTx(func(tx *scTx) error {
+		return yk.authManagementKey(mgmtKey, tx)
+	})
+
+	if err != nil {
 		t.Errorf("authenticating with new management key: %v", err)
 	}
+
 	if err := yk.SetManagementKey(mgmtKey, DefaultManagementKey); err != nil {
 		t.Fatalf("resetting management key: %v", err)
 	}
@@ -239,7 +266,11 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 
 	badPIN := "0"
 	for {
-		err := ykLogin(yk.tx, badPIN)
+
+		err := yk.withTx(func(tx *scTx) error {
+			return ykLogin(tx, badPIN)
+		})
+
 		if err == nil {
 			t.Fatalf("login with bad pin succeeded")
 		}
@@ -255,7 +286,11 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 	if err := yk.Unblock(DefaultPUK, DefaultPIN); err != nil {
 		t.Fatalf("unblocking pin: %v", err)
 	}
-	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
+
+	err := yk.withTx(func(tx *scTx) error {
+		return ykLogin(tx, DefaultPIN)
+	})
+	if err != nil {
 		t.Errorf("failed to login with pin after unblock: %v", err)
 	}
 }

@@ -35,6 +35,7 @@ var (
 const (
 	scardScopeSystem      = 2
 	scardShareExclusive   = 1
+	scardShareShared      = 2
 	scardLeaveCard        = 0
 	scardProtocolT1       = 2
 	scardPCIT1            = 0
@@ -54,10 +55,11 @@ func isRCNoReaders(rc uintptr) bool {
 }
 
 type scContext struct {
-	ctx syscall.Handle
+	ctx    syscall.Handle
+	shared bool
 }
 
-func newSCContext() (*scContext, error) {
+func newSCContext(shared bool) (*scContext, error) {
 	var ctx syscall.Handle
 
 	r0, _, _ := procSCardEstablishContext.Call(
@@ -69,7 +71,7 @@ func newSCContext() (*scContext, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scContext{ctx: ctx}, nil
+	return &scContext{ctx: ctx, shared: shared}, nil
 }
 
 func (c *scContext) Close() error {
@@ -127,14 +129,26 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		handle         syscall.Handle
 		activeProtocol uint16
 	)
-	r0, _, _ := procSCardConnectW.Call(
-		uintptr(c.ctx),
-		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(reader))),
-		scardShareExclusive,
-		scardProtocolT1,
-		uintptr(unsafe.Pointer(&handle)),
-		uintptr(activeProtocol),
-	)
+	var r0 uintptr
+	if c.shared {
+		r0, _, _ = procSCardConnectW.Call(
+			uintptr(c.ctx),
+			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(reader))),
+			scardShareShared,
+			scardProtocolT1,
+			uintptr(unsafe.Pointer(&handle)),
+			uintptr(activeProtocol),
+		)
+	} else {
+		r0, _, _ = procSCardConnectW.Call(
+			uintptr(c.ctx),
+			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(reader))),
+			scardShareExclusive,
+			scardProtocolT1,
+			uintptr(unsafe.Pointer(&handle)),
+			uintptr(activeProtocol),
+		)
+	}
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}

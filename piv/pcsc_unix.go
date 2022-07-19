@@ -42,16 +42,17 @@ import (
 const rcSuccess = C.SCARD_S_SUCCESS
 
 type scContext struct {
-	ctx C.SCARDCONTEXT
+	ctx    C.SCARDCONTEXT
+	shared bool
 }
 
-func newSCContext() (*scContext, error) {
+func newSCContext(shared bool) (*scContext, error) {
 	var ctx C.SCARDCONTEXT
 	rc := C.SCardEstablishContext(C.SCARD_SCOPE_SYSTEM, nil, nil, &ctx)
 	if err := scCheck(rc); err != nil {
 		return nil, err
 	}
-	return &scContext{ctx: ctx}, nil
+	return &scContext{ctx: ctx, shared: shared}, nil
 }
 
 func (c *scContext) Close() error {
@@ -97,12 +98,23 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		handle         C.SCARDHANDLE
 		activeProtocol C.DWORD
 	)
-	rc := C.SCardConnect(c.ctx, C.CString(reader),
-		C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
-		&handle, &activeProtocol)
-	if err := scCheck(rc); err != nil {
-		return nil, err
+
+	if c.shared {
+		rc := C.SCardConnect(c.ctx, C.CString(reader),
+			C.SCARD_SHARE_SHARED, C.SCARD_PROTOCOL_T1,
+			&handle, &activeProtocol)
+		if err := scCheck(rc); err != nil {
+			return nil, err
+		}
+	} else {
+		rc := C.SCardConnect(c.ctx, C.CString(reader),
+			C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
+			&handle, &activeProtocol)
+		if err := scCheck(rc); err != nil {
+			return nil, err
+		}
 	}
+
 	return &scHandle{handle}, nil
 }
 

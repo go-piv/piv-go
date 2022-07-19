@@ -250,7 +250,7 @@ func TestSlots(t *testing.T) {
 			}
 
 			tmpl := &x509.Certificate{
-				Subject:      pkix.Name{CommonName: "my-client"},
+				Subject:      pkix.Name{CommonName: "my-Client"},
 				SerialNumber: big.NewInt(1),
 				NotBefore:    time.Now(),
 				NotAfter:     time.Now().Add(time.Hour),
@@ -483,7 +483,7 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 	}
 
 	cliTmpl := &x509.Certificate{
-		Subject:      pkix.Name{CommonName: "my-client"},
+		Subject:      pkix.Name{CommonName: "my-Client"},
 		SerialNumber: big.NewInt(101),
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(time.Hour),
@@ -492,18 +492,18 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 	}
 	cliCertDER, err := x509.CreateCertificate(rand.Reader, cliTmpl, caCert, pub, caPriv)
 	if err != nil {
-		t.Fatalf("creating client cert: %v", err)
+		t.Fatalf("creating Client cert: %v", err)
 	}
 	cliCert, err := x509.ParseCertificate(cliCertDER)
 	if err != nil {
 		t.Fatalf("parsing cli cert: %v", err)
 	}
 	if err := yk.SetCertificate(DefaultManagementKey, slot, cliCert); err != nil {
-		t.Fatalf("storing client cert: %v", err)
+		t.Fatalf("storing Client cert: %v", err)
 	}
 	gotCert, err := yk.Certificate(slot)
 	if err != nil {
-		t.Fatalf("getting client cert: %v", err)
+		t.Fatalf("getting Client cert: %v", err)
 	}
 	if !bytes.Equal(gotCert.Raw, cliCert.Raw) {
 		t.Errorf("stored cert didn't match cert retrieved")

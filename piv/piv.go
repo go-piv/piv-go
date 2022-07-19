@@ -51,8 +51,8 @@ var (
 //
 // See: https://ludovicrousseau.blogspot.com/2010/05/what-is-in-pcsc-reader-name.html
 func Cards() ([]string, error) {
-	var c client
-	return c.Cards()
+	var c Client
+	return c.cards()
 }
 
 const (
@@ -102,7 +102,6 @@ const (
 type YubiKey struct {
 	ctx *scContext
 	h   *scHandle
-	tx  *scTx
 
 	rand io.Reader
 
@@ -124,23 +123,31 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
-// Open connects to a YubiKey smart card.
-func Open(card string) (*YubiKey, error) {
-	var c client
-	return c.Open(card)
-}
-
-// client is a smart card client and may be exported in the future to allow
+// Client is a smart card Client and may be exported in the future to allow
 // configuration for the top level Open() and Cards() APIs.
-type client struct {
+type Client struct {
 	// Rand is a cryptographic source of randomness used for card challenges.
 	//
 	// If nil, defaults to crypto.Rand.
 	Rand io.Reader
+
+	// Shared enables a non-exclusive connection to the PIV application, allowing
+	// other applications that also request a non-exclusive connection to connect
+	// at the same time.
+	//
+	// Certain features, such as cached PINs, don't work when this feature is enabled.
+	// It's also common for other applications to require exclusive connections.
+	Shared bool
 }
 
-func (c *client) Cards() ([]string, error) {
-	ctx, err := newSCContext()
+// Open connects to a YubiKey smart card.
+func Open(card string) (*YubiKey, error) {
+	var c Client
+	return c.Open(card)
+}
+
+func (c *Client) cards() ([]string, error) {
+	ctx, err := newSCContext(c.Shared)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pscs: %w", err)
 	}
@@ -148,8 +155,18 @@ func (c *client) Cards() ([]string, error) {
 	return ctx.ListReaders()
 }
 
-func (c *client) Open(card string) (*YubiKey, error) {
-	ctx, err := newSCContext()
+func (yk *YubiKey) withTx(fn func(tx *scTx) error) error {
+	tx, err := yk.h.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning smart card transaction: %w", err)
+	}
+	defer tx.Close()
+	return fn(tx)
+}
+
+// Open connects to a YubiKey smart card.
+func (c *Client) Open(card string) (*YubiKey, error) {
+	ctx, err := newSCContext(c.Shared)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
 	}
@@ -159,27 +176,30 @@ func (c *client) Open(card string) (*YubiKey, error) {
 		ctx.Close()
 		return nil, fmt.Errorf("connecting to smart card: %w", err)
 	}
-	tx, err := h.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
-	}
-	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
-		tx.Close()
-		return nil, fmt.Errorf("selecting piv applet: %w", err)
-	}
 
-	yk := &YubiKey{ctx: ctx, h: h, tx: tx}
-	v, err := ykVersion(yk.tx)
+	yk := &YubiKey{ctx: ctx, h: h}
+
+	err = yk.withTx(func(tx *scTx) error {
+		if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
+			return fmt.Errorf("selecting piv applet: %w", err)
+		}
+		v, err := ykVersion(tx)
+		if err != nil {
+			return fmt.Errorf("getting yubikey version: %w", err)
+		}
+		yk.version = v
+		if c.Rand != nil {
+			yk.rand = c.Rand
+		} else {
+			yk.rand = rand.Reader
+		}
+		return nil
+	})
 	if err != nil {
 		yk.Close()
-		return nil, fmt.Errorf("getting yubikey version: %w", err)
+		return nil, err
 	}
-	yk.version = v
-	if c.Rand != nil {
-		yk.rand = c.Rand
-	} else {
-		yk.rand = rand.Reader
-	}
+
 	return yk, nil
 }
 
@@ -198,7 +218,13 @@ func (yk *YubiKey) Version() Version {
 
 // Serial returns the YubiKey's serial number.
 func (yk *YubiKey) Serial() (uint32, error) {
-	return ykSerial(yk.tx, yk.version)
+	var serial uint32
+	err := yk.withTx(func(tx *scTx) error {
+		var err error
+		serial, err = ykSerial(tx, yk.version)
+		return err
+	})
+	return serial, err
 }
 
 func encodePIN(pin string) ([]byte, error) {
@@ -225,7 +251,9 @@ func encodePIN(pin string) ([]byte, error) {
 //
 // Use DefaultPIN if the PIN hasn't been set.
 func (yk *YubiKey) authPIN(pin string) error {
-	return ykLogin(yk.tx, pin)
+	return yk.withTx(func(tx *scTx) error {
+		return ykLogin(tx, pin)
+	})
 }
 
 func ykLogin(tx *scTx, pin string) error {
@@ -250,7 +278,13 @@ func ykLoginNeeded(tx *scTx) bool {
 
 // Retries returns the number of attempts remaining to enter the correct PIN.
 func (yk *YubiKey) Retries() (int, error) {
-	return ykPINRetries(yk.tx)
+	var retry int
+	err := yk.withTx(func(tx *scTx) error {
+		var err error
+		retry, err = ykPINRetries(tx)
+		return err
+	})
+	return retry, err
 }
 
 func ykPINRetries(tx *scTx) (int, error) {
@@ -270,7 +304,9 @@ func ykPINRetries(tx *scTx) (int, error) {
 // and resetting the PIN, PUK, and Management Key to their default values. This
 // does NOT affect data on other applets, such as GPG or U2F.
 func (yk *YubiKey) Reset() error {
-	return ykReset(yk.tx, yk.rand)
+	return yk.withTx(func(tx *scTx) error {
+		return ykReset(tx, yk.rand)
+	})
 }
 
 func ykReset(tx *scTx, r io.Reader) error {
@@ -338,8 +374,8 @@ type version struct {
 // certificates to slots.
 //
 // Use DefaultManagementKey if the management key hasn't been set.
-func (yk *YubiKey) authManagementKey(key [24]byte) error {
-	return ykAuthenticate(yk.tx, key, yk.rand)
+func (yk *YubiKey) authManagementKey(key [24]byte, tx *scTx) error {
+	return ykAuthenticate(tx, key, yk.rand)
 }
 
 var (
@@ -457,13 +493,14 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 //
 //
 func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
-	if err := ykAuthenticate(yk.tx, oldKey, yk.rand); err != nil {
-		return fmt.Errorf("authenticating with old key: %w", err)
-	}
-	if err := ykSetManagementKey(yk.tx, newKey, false); err != nil {
-		return err
-	}
-	return nil
+	return yk.withTx(func(tx *scTx) error {
+		err := ykAuthenticate(tx, oldKey, yk.rand)
+		if err != nil {
+			return fmt.Errorf("authenticating with old key: %w", err)
+		}
+		return ykSetManagementKey(tx, newKey, false)
+
+	})
 }
 
 // ykSetManagementKey updates the management key to a new key. This requires
@@ -503,7 +540,9 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 //		}
 //
 func (yk *YubiKey) SetPIN(oldPIN, newPIN string) error {
-	return ykChangePIN(yk.tx, oldPIN, newPIN)
+	return yk.withTx(func(tx *scTx) error {
+		return ykChangePIN(tx, oldPIN, newPIN)
+	})
 }
 
 func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
@@ -526,7 +565,9 @@ func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
 
 // Unblock unblocks the PIN, setting it to a new value.
 func (yk *YubiKey) Unblock(puk, newPIN string) error {
-	return ykUnblockPIN(yk.tx, puk, newPIN)
+	return yk.withTx(func(tx *scTx) error {
+		return ykUnblockPIN(tx, puk, newPIN)
+	})
 }
 
 func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
@@ -564,7 +605,9 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 //		}
 //
 func (yk *YubiKey) SetPUK(oldPUK, newPUK string) error {
-	return ykChangePUK(yk.tx, oldPUK, newPUK)
+	return yk.withTx(func(tx *scTx) error {
+		return ykChangePUK(tx, oldPUK, newPUK)
+	})
 }
 
 func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
@@ -676,7 +719,12 @@ func unmarshalDERField(b []byte, tag uint64) (obj []byte, err error) {
 // Metadata returns protected data stored on the card. This can be used to
 // retrieve PIN protected management keys.
 func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
-	m, err := ykGetProtectedMetadata(yk.tx, pin)
+	var m *Metadata
+	err := yk.withTx(func(tx *scTx) error {
+		var err error
+		m, err = ykGetProtectedMetadata(tx, pin)
+		return err
+	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return &Metadata{}, nil
@@ -690,7 +738,9 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 // store the management key on the smart card instead of managing the PIN and
 // management key seperately.
 func (yk *YubiKey) SetMetadata(key [24]byte, m *Metadata) error {
-	return ykSetProtectedMetadata(yk.tx, key, m)
+	return yk.withTx(func(tx *scTx) error {
+		return ykSetProtectedMetadata(tx, key, m)
+	})
 }
 
 // Metadata holds protected metadata. This is primarily used by YubiKey manager
