@@ -767,7 +767,7 @@ func TestSetRSAPrivateKey(t *testing.T) {
 				t.Fatalf("decrypting data: %v", err)
 			}
 
-			if bytes.Compare(data, decrypted) != 0 {
+			if !bytes.Equal(data, decrypted) {
 				t.Fatalf("decrypted data is different to the source data")
 			}
 		})
