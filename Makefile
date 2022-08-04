@@ -4,7 +4,7 @@ test: lint
 
 .PHONY: lint
 lint:
-	golint -set_exit_status ./...
+	staticcheck ./...
 
 .PHONY: build
 build: lint
