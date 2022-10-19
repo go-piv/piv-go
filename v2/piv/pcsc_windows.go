@@ -35,6 +35,7 @@ var (
 const (
 	scardScopeSystem      = 2
 	scardShareExclusive   = 1
+	scardShareShared      = 2
 	scardLeaveCard        = 0
 	scardProtocolT1       = 2
 	scardPCIT1            = 0
@@ -122,7 +123,7 @@ func (c *scContext) ListReaders() ([]string, error) {
 	return readers, nil
 }
 
-func (c *scContext) Connect(reader string) (*scHandle, error) {
+func (c *scContext) Connect(reader string, shared bool) (*scHandle, error) {
 	var (
 		handle         syscall.Handle
 		activeProtocol uint16
@@ -131,10 +132,15 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid reader string: %v", err)
 	}
+
+	mode := uintptr(scardShareExclusive)
+	if shared {
+		mode = scardShareShared
+	}
 	r0, _, _ := procSCardConnectW.Call(
 		uintptr(c.ctx),
 		uintptr(unsafe.Pointer(readerPtr)),
-		scardShareExclusive,
+		mode,
 		scardProtocolT1,
 		uintptr(unsafe.Pointer(&handle)),
 		uintptr(activeProtocol),

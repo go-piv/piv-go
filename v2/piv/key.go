@@ -616,7 +616,12 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 //
 // If the slot doesn't have a key, the returned error wraps ErrNotFound.
 func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
-	cert, err := ykAttest(yk.tx, slot)
+	var cert *x509.Certificate
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		cert, err = ykAttest(tx, slot)
+		return err
+	})
 	if err == nil {
 		return cert, nil
 	}
@@ -725,7 +730,12 @@ func (yk *YubiKey) KeyInfo(slot Slot) (KeyInfo, error) {
 		param1:      0x00,
 		param2:      byte(slot.Key),
 	}
-	resp, err := yk.tx.Transmit(cmd)
+	var resp []byte
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		resp, err = tx.Transmit(cmd)
+		return err
+	})
 	if err != nil {
 		return KeyInfo{}, fmt.Errorf("command failed: %w", err)
 	}
@@ -753,7 +763,12 @@ func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
 			byte(slot.Object),
 		},
 	}
-	resp, err := yk.tx.Transmit(cmd)
+	var resp []byte
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		resp, err = tx.Transmit(cmd)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -775,34 +790,39 @@ func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
 
 // FormFactor returns the physical form factor of the YubiKey.
 func (yk *YubiKey) FormFactor() (Formfactor, error) {
-	if err := ykSelectApplication(yk.tx, aidManagement[:]); err != nil {
-		return 0, fmt.Errorf("selecting management applet: %v", err)
-	}
-	defer ykSelectApplication(yk.tx, aidPIV[:])
-	// INS_READ_CONFIG = 0x1D
-	// https://github.com/Yubico/yubikey-manager/blob/9fe76be2cbf5e9a3b5a9a8d78411949a028b3745/yubikit/management.py#L512
-	cmd := apdu{instruction: 0x1D}
-	resp, err := yk.tx.Transmit(cmd)
-	if err != nil {
-		return 0, fmt.Errorf("reading device info: %v", err)
-	}
-	if len(resp) < 1 {
-		return 0, fmt.Errorf("invalid response length")
-	}
-	payload := resp[1:]
-	// TAG_FORM_FACTOR = 0x04
-	// https://github.com/Yubico/yubikey-manager/blob/9fe76be2cbf5e9a3b5a9a8d78411949a028b3745/yubikit/management.py#L211
-	formFactorData, err := findTLVTag(payload, 0x04)
-	if err != nil {
-		if err == errTagNotFound {
-			return 0, nil
+	var formFactor Formfactor = 0
+	err := yk.tx(func(tx *scTx) error {
+		if err := ykSelectApplication(tx, aidManagement[:]); err != nil {
+			return fmt.Errorf("selecting management applet: %v", err)
 		}
-		return 0, fmt.Errorf("parsing response: %v", err)
-	}
-	if len(formFactorData) == 0 {
-		return 0, nil
-	}
-	return Formfactor(formFactorData[0]), nil
+		defer ykSelectApplication(tx, aidPIV[:])
+		// INS_READ_CONFIG = 0x1D
+		// https://github.com/Yubico/yubikey-manager/blob/9fe76be2cbf5e9a3b5a9a8d78411949a028b3745/yubikit/management.py#L512
+		cmd := apdu{instruction: 0x1D}
+		resp, err := tx.Transmit(cmd)
+		if err != nil {
+			return fmt.Errorf("reading device info: %v", err)
+		}
+		if len(resp) < 1 {
+			return fmt.Errorf("invalid response length")
+		}
+		payload := resp[1:]
+		// TAG_FORM_FACTOR = 0x04
+		// https://github.com/Yubico/yubikey-manager/blob/9fe76be2cbf5e9a3b5a9a8d78411949a028b3745/yubikit/management.py#L211
+		formFactorData, err := findTLVTag(payload, 0x04)
+		if err != nil {
+			if err == errTagNotFound {
+				return nil
+			}
+			return fmt.Errorf("parsing response: %v", err)
+		}
+		if len(formFactorData) == 0 {
+			return nil
+		}
+		formFactor = Formfactor(formFactorData[0])
+		return nil
+	})
+	return formFactor, err
 }
 
 // findTLVTag searches through TLV (Tag-Length-Value) encoded data for a
@@ -912,10 +932,12 @@ func marshalASN1(tag byte, data []byte) []byte {
 // certificate isn't required to use the associated key for signing or
 // decryption.
 func (yk *YubiKey) SetCertificate(key []byte, slot Slot, cert *x509.Certificate) error {
-	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
-		return fmt.Errorf("authenticating with management key: %w", err)
-	}
-	return ykStoreCertificate(yk.tx, slot, cert)
+	return yk.tx(func(tx *scTx) error {
+		if err := ykAuthenticate(tx, key, yk.rand, yk.version); err != nil {
+			return fmt.Errorf("authenticating with management key: %w", err)
+		}
+		return ykStoreCertificate(tx, slot, cert)
+	})
 }
 
 func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
@@ -966,10 +988,16 @@ type Key struct {
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
 func (yk *YubiKey) GenerateKey(key []byte, slot Slot, opts Key) (crypto.PublicKey, error) {
-	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
-		return nil, fmt.Errorf("authenticating with management key: %w", err)
-	}
-	return ykGenerateKey(yk.tx, slot, opts)
+	var pub crypto.PublicKey
+	err := yk.tx(func(tx *scTx) error {
+		if err := ykAuthenticate(tx, key, yk.rand, yk.version); err != nil {
+			return fmt.Errorf("authenticating with management key: %w", err)
+		}
+		var err error
+		pub, err = ykGenerateKey(tx, slot, opts)
+		return err
+	})
+	return pub, err
 }
 
 func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
@@ -1053,8 +1081,12 @@ type KeyAuth struct {
 	// If provided, PINPrompt is ignored.
 	PIN string
 	// PINPrompt can be used to interactively request the PIN from the user. The
-	// method is only called when needed. For example, if a key specifies
-	// PINPolicyOnce, PINPrompt will only be called once per YubiKey struct.
+	// method is only called when needed for exclusive connections. If a key
+	// specifies PINPolicyOnce, PINPrompt will only be called once per YubiKey
+	// struct.
+	//
+	// Clients using a shared connection will call the PIN prompt on every
+	// operation, regardless of PIN policy.
 	PINPrompt func() (pin string, err error)
 
 	// PINPolicy can be used to specify the PIN caching strategy for the slot. If
@@ -1065,7 +1097,7 @@ type KeyAuth struct {
 	PINPolicy PINPolicy
 }
 
-func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
+func (k KeyAuth) authTx(tx *scTx, pp PINPolicy) error {
 	// PINPolicyNever shouldn't require a PIN.
 	if pp == PINPolicyNever {
 		return nil
@@ -1079,7 +1111,7 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	// PINPolicyAlways should always prompt a PIN even if the key says that
 	// login isn't needed.
 	// https://github.com/go-piv/piv-go/issues/49
-	if pp != PINPolicyAlways && !ykLoginNeeded(yk.tx) {
+	if pp != PINPolicyAlways && !ykLoginNeeded(tx) {
 		return nil
 	}
 
@@ -1094,41 +1126,47 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	if pin == "" {
 		return fmt.Errorf("pin required but wasn't provided")
 	}
-	return ykLogin(yk.tx, pin)
+	return ykLogin(tx, pin)
 }
 
 func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
 	const swSecurityStatusNotSatisfied = 0x6982
-
-	if pp == PINPolicyMatchAlways {
-		if err := yk.VerifyBiometrics(); err != nil {
-			return nil, err
-		}
-		return f(yk.tx)
-	}
-
-	if pp == PINPolicyMatchOnce {
-		if err := k.authTx(yk, pp); err != nil {
-			return nil, err
-		}
-		resp, err := f(yk.tx)
-		if err == nil {
-			return resp, nil
-		}
-		var apdu *apduErr
-		if errors.As(err, &apdu) && apdu.Status() == swSecurityStatusNotSatisfied {
-			if err := yk.VerifyBiometrics(); err != nil {
-				return nil, err
+	var b []byte
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		if pp == PINPolicyMatchAlways {
+			if err := ykVerifyUV(tx); err != nil {
+				return err
 			}
-			return f(yk.tx)
+			b, err = f(tx)
+			return err
 		}
-		return nil, err
-	}
 
-	if err := k.authTx(yk, pp); err != nil {
-		return nil, err
-	}
-	return f(yk.tx)
+		if pp == PINPolicyMatchOnce {
+			if err := k.authTx(tx, pp); err != nil {
+				return err
+			}
+			b, err = f(tx)
+			if err == nil {
+				return nil
+			}
+			var apdu *apduErr
+			if errors.As(err, &apdu) && apdu.Status() == swSecurityStatusNotSatisfied {
+				if err := ykVerifyUV(tx); err != nil {
+					return err
+				}
+				b, err = f(tx)
+			}
+			return err
+		}
+
+		if err := k.authTx(tx, pp); err != nil {
+			return err
+		}
+		b, err = f(tx)
+		return err
+	})
+	return b, err
 }
 
 func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
@@ -1307,11 +1345,13 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key []byte, slot Slot, private crypto.P
 		tags = append(tags, param...)
 	}
 
-	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
-		return fmt.Errorf("authenticating with management key: %w", err)
-	}
+	return yk.tx(func(tx *scTx) error {
+		if err := ykAuthenticate(tx, key, yk.rand, yk.version); err != nil {
+			return fmt.Errorf("authenticating with management key: %w", err)
+		}
 
-	return ykImportKey(yk.tx, tags, slot, policy)
+		return ykImportKey(tx, tags, slot, policy)
+	})
 }
 
 func ykImportKey(tx *scTx, tags []byte, slot Slot, o Key) error {
