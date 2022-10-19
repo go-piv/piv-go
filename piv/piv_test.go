@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"math/bits"
 	"strings"
@@ -74,8 +75,27 @@ func TestCards(t *testing.T) {
 	}
 }
 
+func runTest(t *testing.T, fn func(*testing.T, *YubiKey)) {
+	t.Run("Exclusive", func(t *testing.T) {
+		yk, close := newTestYubiKey(t)
+		fn(t, yk)
+		close()
+	})
+	t.Run("Shared", func(t *testing.T) {
+		c := &Client{Shared: true}
+		yk, close := newTestYubiKeyClient(t, c)
+		fn(t, yk)
+		close()
+	})
+}
+
 func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
-	cards, err := Cards()
+	var c Client
+	return newTestYubiKeyClient(t, &c)
+}
+
+func newTestYubiKeyClient(t *testing.T, c *Client) (*YubiKey, func()) {
+	cards, err := c.Cards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
 	}
@@ -86,7 +106,7 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 		if !canModifyYubiKey {
 			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
-		yk, err := Open(card)
+		yk, err := c.Open(card)
 		if err != nil {
 			t.Fatalf("getting new yubikey: %v", err)
 		}
@@ -144,220 +164,229 @@ func TestMultipleConnections(t *testing.T) {
 }
 
 func TestYubiKeySerial(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	if _, err := yk.Serial(); err != nil {
-		t.Fatalf("getting serial number: %v", err)
-	}
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		if _, err := yk.Serial(); err != nil {
+			t.Fatalf("getting serial number: %v", err)
+		}
+	})
 }
 
 func TestYubiKeyLoginNeeded(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	testRequiresVersion(t, yk, 4, 3, 0)
-
-	if !ykLoginNeeded(yk.tx) {
-		t.Errorf("expected login needed")
-	}
-	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
-		t.Fatalf("login: %v", err)
-	}
-	if ykLoginNeeded(yk.tx) {
-		t.Errorf("expected no login needed")
-	}
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		err := yk.tx(func(tx *scTx) error {
+			if !ykLoginNeeded(tx) {
+				t.Errorf("expected login needed")
+			}
+			if err := ykLogin(tx, DefaultPIN); err != nil {
+				t.Fatalf("login: %v", err)
+			}
+			if ykLoginNeeded(tx) {
+				t.Errorf("expected no login needed")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("transaction failed: %v", err)
+		}
+	})
 }
 
 func TestYubiKeyPINRetries(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-	retries, err := yk.Retries()
-	if err != nil {
-		t.Fatalf("getting retries: %v", err)
-	}
-	if retries < 0 || retries > 15 {
-		t.Fatalf("invalid number of retries: %d", retries)
-	}
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		retries, err := yk.Retries()
+		if err != nil {
+			t.Fatalf("getting retries: %v", err)
+		}
+		if retries < 0 || retries > 15 {
+			t.Fatalf("invalid number of retries: %d", retries)
+		}
+	})
 }
 
 func TestYubiKeyReset(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
-	}
-	yk, close := newTestYubiKey(t)
-	defer close()
-	if err := yk.Reset(); err != nil {
-		t.Fatalf("resetting yubikey: %v", err)
-	}
-	if err := yk.authPIN(DefaultPIN); err != nil {
-		t.Fatalf("login: %v", err)
-	}
-}
-
-func TestYubiKeyLogin(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	if err := yk.authPIN(DefaultPIN); err != nil {
-		t.Fatalf("login: %v", err)
-	}
-}
-
-func TestYubiKeyAuthenticate(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	if err := yk.authManagementKey(DefaultManagementKey); err != nil {
-		t.Errorf("authenticating: %v", err)
-	}
-}
-
-func TestYubiKeySetManagementKey(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	var mgmtKey [24]byte
-	if _, err := io.ReadFull(rand.Reader, mgmtKey[:]); err != nil {
-		t.Fatalf("generating management key: %v", err)
-	}
-
-	if err := yk.SetManagementKey(DefaultManagementKey, mgmtKey); err != nil {
-		t.Fatalf("setting management key: %v", err)
-	}
-	if err := yk.authManagementKey(mgmtKey); err != nil {
-		t.Errorf("authenticating with new management key: %v", err)
-	}
-	if err := yk.SetManagementKey(mgmtKey, DefaultManagementKey); err != nil {
-		t.Fatalf("resetting management key: %v", err)
-	}
-}
-
-func TestYubiKeyUnblockPIN(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	badPIN := "0"
-	for {
-		err := ykLogin(yk.tx, badPIN)
-		if err == nil {
-			t.Fatalf("login with bad pin succeeded")
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		if testing.Short() {
+			t.Skip("skipping test in short mode.")
 		}
-		var e AuthErr
-		if !errors.As(err, &e) {
-			t.Fatalf("error returned was not a wrong pin error: %v", err)
-		}
-		if e.Retries == 0 {
-			break
-		}
-	}
-
-	if err := yk.Unblock(DefaultPUK, DefaultPIN); err != nil {
-		t.Fatalf("unblocking pin: %v", err)
-	}
-	if err := ykLogin(yk.tx, DefaultPIN); err != nil {
-		t.Errorf("failed to login with pin after unblock: %v", err)
-	}
-}
-
-func TestYubiKeyChangePIN(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	newPIN := "654321"
-	if err := yk.SetPIN(newPIN, newPIN); err == nil {
-		t.Errorf("successfully changed pin with invalid pin, expected error")
-	}
-	if err := yk.SetPIN(DefaultPIN, newPIN); err != nil {
-		t.Fatalf("changing pin: %v", err)
-	}
-	if err := yk.SetPIN(newPIN, DefaultPIN); err != nil {
-		t.Fatalf("resetting pin: %v", err)
-	}
-}
-
-func TestYubiKeyChangePUK(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	newPUK := "87654321"
-	if err := yk.SetPUK(newPUK, newPUK); err == nil {
-		t.Errorf("successfully changed puk with invalid puk, expected error")
-	}
-	if err := yk.SetPUK(DefaultPUK, newPUK); err != nil {
-		t.Fatalf("changing puk: %v", err)
-	}
-	if err := yk.SetPUK(newPUK, DefaultPUK); err != nil {
-		t.Fatalf("resetting puk: %v", err)
-	}
-}
-
-func TestChangeManagementKey(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
-
-	var newKey [24]byte
-	if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
-		t.Fatalf("generating new management key: %v", err)
-	}
-	// Apply odd-parity
-	for i, b := range newKey {
-		if bits.OnesCount8(uint8(b))%2 == 0 {
-			newKey[i] = b ^ 1 // flip least significant bit
-		}
-	}
-	if err := yk.SetManagementKey(newKey, newKey); err == nil {
-		t.Errorf("successfully changed management key with invalid key, expected error")
-	}
-	if err := yk.SetManagementKey(DefaultManagementKey, newKey); err != nil {
-		t.Fatalf("changing management key: %v", err)
-	}
-	if err := yk.SetManagementKey(newKey, DefaultManagementKey); err != nil {
-		t.Fatalf("resetting management key: %v", err)
-	}
-}
-
-func TestMetadata(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping test in short mode.")
-	}
-	func() {
-		yk, close := newTestYubiKey(t)
-		defer close()
 		if err := yk.Reset(); err != nil {
 			t.Fatalf("resetting yubikey: %v", err)
 		}
-	}()
+		if err := yk.authPIN(DefaultPIN); err != nil {
+			t.Fatalf("login: %v", err)
+		}
+	})
+}
 
-	yk, close := newTestYubiKey(t)
-	defer close()
+func TestYubiKeyLogin(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		if err := yk.authPIN(DefaultPIN); err != nil {
+			t.Fatalf("login: %v", err)
+		}
+	})
+}
 
-	if m, err := yk.Metadata(DefaultPIN); err != nil {
-		t.Errorf("getting metadata: %v", err)
-	} else if m.ManagementKey != nil {
-		t.Errorf("expected no management key set")
-	}
+func TestYubiKeyAuthenticate(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		err := yk.tx(func(tx *scTx) error {
+			return yk.authManagementKey(tx, DefaultManagementKey)
+		})
+		if err != nil {
+			t.Errorf("authenticating: %v", err)
+		}
+	})
+}
 
-	wantKey := [24]byte{
-		0x09, 0xd9, 0x87, 0x81, 0xfb, 0xdc, 0xc9, 0xb6,
-		0x91, 0xa2, 0x05, 0x80, 0x6e, 0xc0, 0xba, 0x84,
-		0x31, 0xac, 0x0d, 0x9f, 0x59, 0xa5, 0x00, 0xad,
-	}
-	m := &Metadata{
-		ManagementKey: &wantKey,
-	}
-	if err := yk.SetMetadata(DefaultManagementKey, m); err != nil {
-		t.Fatalf("setting metadata: %v", err)
-	}
-	got, err := yk.Metadata(DefaultPIN)
-	if err != nil {
-		t.Fatalf("getting metadata: %v", err)
-	}
-	if got.ManagementKey == nil {
-		t.Errorf("no management key")
-	} else if *got.ManagementKey != wantKey {
-		t.Errorf("wanted management key=0x%x, got=0x%x", wantKey, got.ManagementKey)
-	}
+func TestYubiKeySetManagementKey(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		var mgmtKey [24]byte
+		if _, err := io.ReadFull(rand.Reader, mgmtKey[:]); err != nil {
+			t.Fatalf("generating management key: %v", err)
+		}
+
+		if err := yk.SetManagementKey(DefaultManagementKey, mgmtKey); err != nil {
+			t.Fatalf("setting management key: %v", err)
+		}
+		err := yk.tx(func(tx *scTx) error {
+			return yk.authManagementKey(tx, DefaultManagementKey)
+		})
+		if err != nil {
+			t.Errorf("authenticating with new management key: %v", err)
+			t.Errorf("authenticating: %v", err)
+		}
+		if err := yk.SetManagementKey(mgmtKey, DefaultManagementKey); err != nil {
+			t.Fatalf("resetting management key: %v", err)
+		}
+	})
+}
+
+func TestYubiKeyUnblockPIN(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		err := yk.tx(func(tx *scTx) error {
+			badPIN := "0"
+			for {
+				err := ykLogin(tx, badPIN)
+				if err == nil {
+					return fmt.Errorf("login with bad pin succeeded")
+				}
+				var e AuthErr
+				if !errors.As(err, &e) {
+					return fmt.Errorf("error returned was not a wrong pin error: %v", err)
+				}
+				if e.Retries == 0 {
+					return nil
+				}
+			}
+		})
+		if err != nil {
+			t.Fatalf("blocking pin: %v", err)
+		}
+
+		if err := yk.Unblock(DefaultPUK, DefaultPIN); err != nil {
+			t.Fatalf("unblocking pin: %v", err)
+		}
+		if err := yk.tx(func(tx *scTx) error {
+			return ykLogin(tx, DefaultPIN)
+		}); err != nil {
+			t.Errorf("failed to login with pin after unblock: %v", err)
+		}
+	})
+}
+
+func TestYubiKeyChangePIN(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		newPIN := "654321"
+		if err := yk.SetPIN(newPIN, newPIN); err == nil {
+			t.Errorf("successfully changed pin with invalid pin, expected error")
+		}
+		if err := yk.SetPIN(DefaultPIN, newPIN); err != nil {
+			t.Fatalf("changing pin: %v", err)
+		}
+		if err := yk.SetPIN(newPIN, DefaultPIN); err != nil {
+			t.Fatalf("resetting pin: %v", err)
+		}
+	})
+}
+
+func TestYubiKeyChangePUK(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		newPUK := "87654321"
+		if err := yk.SetPUK(newPUK, newPUK); err == nil {
+			t.Errorf("successfully changed puk with invalid puk, expected error")
+		}
+		if err := yk.SetPUK(DefaultPUK, newPUK); err != nil {
+			t.Fatalf("changing puk: %v", err)
+		}
+		if err := yk.SetPUK(newPUK, DefaultPUK); err != nil {
+			t.Fatalf("resetting puk: %v", err)
+		}
+	})
+}
+
+func TestChangeManagementKey(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		var newKey [24]byte
+		if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
+			t.Fatalf("generating new management key: %v", err)
+		}
+		// Apply odd-parity
+		for i, b := range newKey {
+			if bits.OnesCount8(uint8(b))%2 == 0 {
+				newKey[i] = b ^ 1 // flip least significant bit
+			}
+		}
+		if err := yk.SetManagementKey(newKey, newKey); err == nil {
+			t.Errorf("successfully changed management key with invalid key, expected error")
+		}
+		if err := yk.SetManagementKey(DefaultManagementKey, newKey); err != nil {
+			t.Fatalf("changing management key: %v", err)
+		}
+		if err := yk.SetManagementKey(newKey, DefaultManagementKey); err != nil {
+			t.Fatalf("resetting management key: %v", err)
+		}
+	})
+}
+
+func TestMetadata(t *testing.T) {
+	runTest(t, func(t *testing.T, yk *YubiKey) {
+		if testing.Short() {
+			t.Skip("skipping test in short mode.")
+		}
+		func() {
+			if err := yk.Reset(); err != nil {
+				t.Fatalf("resetting yubikey: %v", err)
+			}
+		}()
+
+		yk, close := newTestYubiKey(t)
+		defer close()
+
+		if m, err := yk.Metadata(DefaultPIN); err != nil {
+			t.Errorf("getting metadata: %v", err)
+		} else if m.ManagementKey != nil {
+			t.Errorf("expected no management key set")
+		}
+
+		wantKey := [24]byte{
+			0x09, 0xd9, 0x87, 0x81, 0xfb, 0xdc, 0xc9, 0xb6,
+			0x91, 0xa2, 0x05, 0x80, 0x6e, 0xc0, 0xba, 0x84,
+			0x31, 0xac, 0x0d, 0x9f, 0x59, 0xa5, 0x00, 0xad,
+		}
+		m := &Metadata{
+			ManagementKey: &wantKey,
+		}
+		if err := yk.SetMetadata(DefaultManagementKey, m); err != nil {
+			t.Fatalf("setting metadata: %v", err)
+		}
+		got, err := yk.Metadata(DefaultPIN)
+		if err != nil {
+			t.Fatalf("getting metadata: %v", err)
+		}
+		if got.ManagementKey == nil {
+			t.Errorf("no management key")
+		} else if *got.ManagementKey != wantKey {
+			t.Errorf("wanted management key=0x%x, got=0x%x", wantKey, got.ManagementKey)
+		}
+	})
 }
 
 func TestMetadataUnmarshal(t *testing.T) {

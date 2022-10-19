@@ -63,7 +63,7 @@ func runHandleTest(t *testing.T, f func(t *testing.T, h *scHandle)) {
 		if reader == "" {
 			t.Skip("could not find yubikey, skipping testing")
 		}
-		h, err := c.Connect(reader)
+		h, err := c.Connect(reader, false)
 		if err != nil {
 			t.Fatalf("connecting to %s: %v", reader, err)
 		}

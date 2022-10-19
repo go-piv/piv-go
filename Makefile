@@ -1,11 +1,7 @@
 .PHONY: test
-test: lint
+test:
 	go test -v ./...
 
-.PHONY: lint
-lint:
-	staticcheck ./...
-
 .PHONY: build
-build: lint
+build:
 	go build ./...
