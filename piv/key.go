@@ -507,7 +507,12 @@ func (yk *YubiKey) AttestationCertificate() (*x509.Certificate, error) {
 //
 // If the slot doesn't have a key, the returned error wraps ErrNotFound.
 func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
-	cert, err := ykAttest(yk.tx, slot)
+	var cert *x509.Certificate
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		cert, err = ykAttest(tx, slot)
+		return err
+	})
 	if err == nil {
 		return cert, nil
 	}
@@ -558,7 +563,12 @@ func (yk *YubiKey) Certificate(slot Slot) (*x509.Certificate, error) {
 			byte(slot.Object),
 		},
 	}
-	resp, err := yk.tx.Transmit(cmd)
+	var resp []byte
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		resp, err = tx.Transmit(cmd)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
@@ -605,10 +615,12 @@ func marshalASN1(tag byte, data []byte) []byte {
 // certificate isn't required to use the associated key for signing or
 // decryption.
 func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificate) error {
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
-		return fmt.Errorf("authenticating with management key: %w", err)
-	}
-	return ykStoreCertificate(yk.tx, slot, cert)
+	return yk.tx(func(tx *scTx) error {
+		if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+			return fmt.Errorf("authenticating with management key: %w", err)
+		}
+		return ykStoreCertificate(tx, slot, cert)
+	})
 }
 
 func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
@@ -659,10 +671,17 @@ type Key struct {
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
 func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
-		return nil, fmt.Errorf("authenticating with management key: %w", err)
-	}
-	return ykGenerateKey(yk.tx, slot, opts)
+	var pub crypto.PublicKey
+	err := yk.tx(func(tx *scTx) error {
+		if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+			return fmt.Errorf("authenticating with management key: %w", err)
+		}
+
+		var err error
+		pub, err = ykGenerateKey(tx, slot, opts)
+		return err
+	})
+	return pub, err
 }
 
 func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
@@ -731,8 +750,12 @@ type KeyAuth struct {
 	// If provided, PINPrompt is ignored.
 	PIN string
 	// PINPrompt can be used to interactively request the PIN from the user. The
-	// method is only called when needed. For example, if a key specifies
-	// PINPolicyOnce, PINPrompt will only be called once per YubiKey struct.
+	// method is only called when needed for exclusive connections. If a key
+	// specifies PINPolicyOnce, PINPrompt will only be called once per YubiKey
+	// struct.
+	//
+	// Clients using a shared connection will call the PIN prompt on every
+	// operation, regardless of PIN policy.
 	PINPrompt func() (pin string, err error)
 
 	// PINPolicy can be used to specify the PIN caching strategy for the slot. If
@@ -743,7 +766,7 @@ type KeyAuth struct {
 	PINPolicy PINPolicy
 }
 
-func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
+func (k KeyAuth) authTx(tx *scTx, pp PINPolicy) error {
 	// PINPolicyNever shouldn't require a PIN.
 	if pp == PINPolicyNever {
 		return nil
@@ -752,7 +775,7 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	// PINPolicyAlways should always prompt a PIN even if the key says that
 	// login isn't needed.
 	// https://github.com/go-piv/piv-go/issues/49
-	if pp != PINPolicyAlways && !ykLoginNeeded(yk.tx) {
+	if pp != PINPolicyAlways && !ykLoginNeeded(tx) {
 		return nil
 	}
 
@@ -767,14 +790,20 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	if pin == "" {
 		return fmt.Errorf("pin required but wasn't provided")
 	}
-	return ykLogin(yk.tx, pin)
+	return ykLogin(tx, pin)
 }
 
 func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
-	if err := k.authTx(yk, pp); err != nil {
-		return nil, err
-	}
-	return f(yk.tx)
+	var b []byte
+	err := yk.tx(func(tx *scTx) error {
+		var err error
+		if err := k.authTx(tx, pp); err != nil {
+			return err
+		}
+		b, err = f(tx)
+		return err
+	})
+	return b, err
 }
 
 func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
@@ -919,11 +948,12 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto
 		tags = append(tags, param...)
 	}
 
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
-		return fmt.Errorf("authenticating with management key: %w", err)
-	}
-
-	return ykImportKey(yk.tx, tags, slot, policy)
+	return yk.tx(func(tx *scTx) error {
+		if err := ykAuthenticate(tx, key, yk.rand); err != nil {
+			return fmt.Errorf("authenticating with management key: %w", err)
+		}
+		return ykImportKey(tx, tags, slot, policy)
+	})
 }
 
 func ykImportKey(tx *scTx, tags []byte, slot Slot, o Key) error {
