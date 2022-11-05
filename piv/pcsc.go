@@ -127,6 +127,29 @@ func (a *apduErr) Unwrap() error {
 	return nil
 }
 
+type scStatus struct {
+	reader   string
+	state    uint32
+	protocol uint32
+	atr      []byte
+}
+
+func (s *scStatus) Reader() string {
+	return s.reader
+}
+
+func (s *scStatus) State() uint32 {
+	return s.state
+}
+
+func (s *scStatus) Protocol() uint32 {
+	return s.protocol
+}
+
+func (s *scStatus) Atr() []byte {
+	return s.atr
+}
+
 type apdu struct {
 	instruction byte
 	param1      byte

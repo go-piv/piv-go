@@ -40,10 +40,12 @@ if err != nil {
 // Find a YubiKey and open the reader.
 var yk *piv.YubiKey
 for _, card := range cards {
-	if strings.Contains(strings.ToLower(card), "yubikey") {
-		if yk, err = piv.Open(card); err != nil {
-			// ...
+	if yk, err := piv.Open(card); err == nil {
+		status := yk.Status()
+		if !strings.Contains(strings.ToLower(string(status.Atr())), "ubike") {
+			continue
 		}
+		// ..
 		break
 	}
 }

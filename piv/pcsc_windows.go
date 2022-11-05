@@ -24,6 +24,7 @@ var (
 	winscard                  = syscall.NewLazyDLL("Winscard.dll")
 	procSCardEstablishContext = winscard.NewProc("SCardEstablishContext")
 	procSCardListReadersW     = winscard.NewProc("SCardListReadersW")
+	procSCardStatusW          = winscard.NewProc("SCardStatusW")
 	procSCardReleaseContext   = winscard.NewProc("SCardReleaseContext")
 	procSCardConnectW         = winscard.NewProc("SCardConnectW")
 	procSCardDisconnect       = winscard.NewProc("SCardDisconnect")
@@ -122,6 +123,11 @@ func (c *scContext) ListReaders() ([]string, error) {
 	return readers, nil
 }
 
+type scHandle struct {
+	handle syscall.Handle
+	status scStatus
+}
+
 func (c *scContext) Connect(reader string) (*scHandle, error) {
 	var (
 		handle         syscall.Handle
@@ -142,11 +148,49 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scHandle{handle}, nil
-}
 
-type scHandle struct {
-	handle syscall.Handle
+	var readerNameLen uint32
+	var atrLen uint32
+	r0, _, _ = procSCardStatusW.Call(
+		uintptr(handle),
+		uintptr(unsafe.Pointer(nil)),
+		uintptr(unsafe.Pointer(&readerNameLen)),
+		uintptr(unsafe.Pointer(nil)),
+		uintptr(unsafe.Pointer(nil)),
+		uintptr(unsafe.Pointer(nil)),
+		uintptr(unsafe.Pointer(&atrLen)),
+	)
+	if err := scCheck(r0); err != nil {
+		return nil, err
+	}
+
+	var state uint32
+	var protocol uint32
+
+	readerName := make([]uint16, readerNameLen)
+	atr := make([]byte, atrLen)
+
+	r0, _, _ = procSCardStatusW.Call(
+		uintptr(handle),
+		uintptr(unsafe.Pointer(&readerName[0])),
+		uintptr(unsafe.Pointer(&readerNameLen)),
+		uintptr(unsafe.Pointer(&state)),
+		uintptr(unsafe.Pointer(&protocol)),
+		uintptr(unsafe.Pointer(&atr[0])),
+		uintptr(unsafe.Pointer(&atrLen)),
+	)
+	if err := scCheck(r0); err != nil {
+		return nil, err
+	}
+
+	status := scStatus{
+		reader:   syscall.UTF16ToString(readerName),
+		state:    state,
+		protocol: protocol,
+		atr:      atr,
+	}
+
+	return &scHandle{handle, status}, nil
 }
 
 func (h *scHandle) Close() error {

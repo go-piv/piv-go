@@ -190,7 +190,7 @@ func TestYubiKeyReset(t *testing.T) {
 	if err := yk.Reset(); err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
 	}
-	if err := yk.authPIN(DefaultPIN); err != nil {
+	if err := yk.AuthPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 }
@@ -199,7 +199,7 @@ func TestYubiKeyLogin(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	if err := yk.authPIN(DefaultPIN); err != nil {
+	if err := yk.AuthPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 }

@@ -89,7 +89,8 @@ func (c *scContext) ListReaders() ([]string, error) {
 }
 
 type scHandle struct {
-	h C.SCARDHANDLE
+	h      C.SCARDHANDLE
+	status scStatus
 }
 
 func (c *scContext) Connect(reader string) (*scHandle, error) {
@@ -103,7 +104,44 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	if err := scCheck(rc); err != nil {
 		return nil, err
 	}
-	return &scHandle{handle}, nil
+
+	var readerNameLen C.DWORD
+	var atrLen C.DWORD
+
+	C.SCardStatus(
+		handle,
+		nil,
+		&readerNameLen,
+		nil,
+		nil,
+		nil,
+		&atrLen,
+	)
+
+	var state uint32
+	var protocol uint32
+
+	readerName := make([]byte, readerNameLen)
+	atr := make([]byte, atrLen)
+
+	C.SCardStatus(
+		handle,
+		(*C.char)(unsafe.Pointer(&readerName[0])),
+		(*C.DWORD)(unsafe.Pointer(&readerNameLen)),
+		(*C.DWORD)(unsafe.Pointer(&state)),
+		(*C.DWORD)(unsafe.Pointer(&protocol)),
+		(*C.uchar)(unsafe.Pointer(&atr[0])),
+		(*C.DWORD)(unsafe.Pointer(&atrLen)),
+	)
+
+	status := scStatus{
+		reader:   string(readerName),
+		state:    state,
+		protocol: protocol,
+		atr:      atr,
+	}
+
+	return &scHandle{handle, status}, nil
 }
 
 func (h *scHandle) Close() error {
