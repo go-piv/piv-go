@@ -196,6 +196,10 @@ func (yk *YubiKey) Version() Version {
 	}
 }
 
+func (yk *YubiKey) Status() scStatus {
+	return yk.h.status
+}
+
 // Serial returns the YubiKey's serial number.
 func (yk *YubiKey) Serial() (uint32, error) {
 	return ykSerial(yk.tx, yk.version)
@@ -216,7 +220,7 @@ func encodePIN(pin string) ([]byte, error) {
 	return data, nil
 }
 
-// authPIN attempts to authenticate against the card with the provided PIN.
+// AuthPIN attempts to authenticate against the card with the provided PIN.
 // The PIN is required to use and modify certain slots.
 //
 // After a specific number of authentication attemps with an invalid PIN,
@@ -224,7 +228,7 @@ func encodePIN(pin string) ([]byte, error) {
 // point the PUK must be used to unblock the PIN.
 //
 // Use DefaultPIN if the PIN hasn't been set.
-func (yk *YubiKey) authPIN(pin string) error {
+func (yk *YubiKey) AuthPIN(pin string) error {
 	return ykLogin(yk.tx, pin)
 }
 
