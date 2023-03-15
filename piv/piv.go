@@ -217,7 +217,9 @@ func encodePIN(pin string) ([]byte, error) {
 }
 
 // VerifyPIN attempts to authenticate against the card with the provided PIN.
-// The PIN is required to use and modify certain slots.
+//
+// PIN authentication for other operations are handled separately, and VerifyPIN
+// does not need to be called before those methods.
 //
 // After a specific number of authentication attemps with an invalid PIN,
 // usually 3, the PIN will become block and refuse further attempts. At that
