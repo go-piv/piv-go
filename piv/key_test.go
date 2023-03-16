@@ -22,11 +22,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"io"
 	"math/big"
 	"testing"
 	"time"
@@ -330,6 +333,179 @@ func TestYubiKeySignRSA(t *testing.T) {
 				t.Errorf("failed to verify signature: %v", err)
 			}
 		})
+	}
+}
+
+func TestYubiKeySignRSAPSS(t *testing.T) {
+	tests := []struct {
+		name string
+		alg  Algorithm
+		long bool
+	}{
+		{"rsa1024", AlgorithmRSA1024, false},
+		{"rsa2048", AlgorithmRSA2048, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.long && testing.Short() {
+				t.Skip("skipping test in short mode")
+			}
+			yk, close := newTestYubiKey(t)
+			defer close()
+			slot := SlotAuthentication
+			key := Key{
+				Algorithm:   test.alg,
+				TouchPolicy: TouchPolicyNever,
+				PINPolicy:   PINPolicyNever,
+			}
+			pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+			if err != nil {
+				t.Fatalf("generating key: %v", err)
+			}
+			pub, ok := pubKey.(*rsa.PublicKey)
+			if !ok {
+				t.Fatalf("public key is not an rsa key")
+			}
+			data := sha256.Sum256([]byte("hello"))
+			priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+			if err != nil {
+				t.Fatalf("getting private key: %v", err)
+			}
+			s, ok := priv.(crypto.Signer)
+			if !ok {
+				t.Fatalf("private key didn't implement crypto.Signer")
+			}
+
+			opt := &rsa.PSSOptions{Hash: crypto.SHA256}
+			out, err := s.Sign(rand.Reader, data[:], opt)
+			if err != nil {
+				t.Fatalf("signing failed: %v", err)
+			}
+			if err := rsa.VerifyPSS(pub, crypto.SHA256, data[:], out, opt); err != nil {
+				t.Errorf("failed to verify signature: %v", err)
+			}
+		})
+	}
+}
+
+func TestTLS13(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+	slot := SlotAuthentication
+	key := Key{
+		Algorithm:   AlgorithmRSA1024,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pub, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+
+	tmpl := &x509.Certificate{
+		Subject:      pkix.Name{CommonName: "test"},
+		SerialNumber: big.NewInt(100),
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"example.com"},
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+			x509.ExtKeyUsageServerAuth,
+		},
+	}
+
+	rawCert, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+	if err != nil {
+		t.Fatalf("creating certificate: %v", err)
+	}
+	x509Cert, err := x509.ParseCertificate(rawCert)
+	if err != nil {
+		t.Fatalf("parsing cert: %v", err)
+	}
+	cert := tls.Certificate{
+		Certificate: [][]byte{rawCert},
+		PrivateKey:  priv,
+		SupportedSignatureAlgorithms: []tls.SignatureScheme{
+			tls.PSSWithSHA256,
+		},
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(x509Cert)
+
+	cliConf := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+		ServerName:   "example.com",
+		MinVersion:   tls.VersionTLS13,
+		MaxVersion:   tls.VersionTLS13,
+	}
+	srvConf := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    pool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+		MaxVersion:   tls.VersionTLS13,
+	}
+
+	srv, err := tls.Listen("tcp", "0.0.0.0:0", srvConf)
+	if err != nil {
+		t.Fatalf("creating tls listener: %v", err)
+	}
+	defer srv.Close()
+
+	errCh := make(chan error, 2)
+
+	want := []byte("hello, world")
+
+	go func() {
+		conn, err := srv.Accept()
+		if err != nil {
+			errCh <- fmt.Errorf("accepting conn: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		got := make([]byte, len(want))
+		if _, err := io.ReadFull(conn, got); err != nil {
+			errCh <- fmt.Errorf("read data: %v", err)
+			return
+		}
+		if !bytes.Equal(want, got) {
+			errCh <- fmt.Errorf("unexpected value read: %s", got)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
+		conn, err := tls.Dial("tcp", srv.Addr().String(), cliConf)
+		if err != nil {
+			errCh <- fmt.Errorf("dial: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		if v := conn.ConnectionState().Version; v != tls.VersionTLS13 {
+			errCh <- fmt.Errorf("client got verison 0x%x, want=0x%x", v, tls.VersionTLS13)
+			return
+		}
+
+		if _, err := conn.Write(want); err != nil {
+			errCh <- fmt.Errorf("write: %v", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("%v", err)
+		}
 	}
 }
 
