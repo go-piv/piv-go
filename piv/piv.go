@@ -555,13 +555,13 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 // To generate a new PUK, use the crypto/rand package.
 //
 //		// Generate a 8 character PUK.
-//		newPUKInt, err := rand.Int(rand.Reader, bit.NewInt(100_000_000))
+//		newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
 //		if err != nil {
 //			// ...
 //		}
 //		// Format with leading zeros.
 //		newPUK := fmt.Sprintf("%08d", newPUKInt)
-//		if err := yk.SetPIN(piv.DefaultPUK, newPUK); err != nil {
+//		if err := yk.SetPUK(piv.DefaultPUK, newPUK); err != nil {
 //			// ...
 //		}
 //
