@@ -479,3 +479,30 @@ func TestMetadataAdditoinalFields(t *testing.T) {
 		t.Errorf("(*Metadata.marshal, got=0x%x, want=0x%x", got, want)
 	}
 }
+
+func TestYubiKeyCardId(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+	yk, close := newTestYubiKey(t)
+	defer close()
+	if err := yk.Reset(); err != nil {
+		t.Fatalf("resetting yubikey: %v", err)
+	}
+	if _, err := yk.CardID(); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expecting not found chuid")
+	}
+	var cardID = CardID{GUID: [16]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0xff},
+	}
+	if err := yk.SetCardID(DefaultManagementKey, &cardID); err != nil {
+		t.Fatal(err)
+	}
+	newCID, err := yk.CardID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(newCID.GUID[:], cardID.GUID[:]) {
+		t.Errorf("(*CardID, got=0x%x, want=0x%x", newCID.GUID, cardID.GUID)
+	}
+}

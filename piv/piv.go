@@ -808,3 +808,142 @@ func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
 	}
 	return nil
 }
+
+// CardID is the Card Holder Unique Identifier with settable GUID
+// Raw contains the whole object
+// GUID contains the Card Universally Unique Identifier.
+type CardID struct {
+	raw  []byte
+	GUID [16]byte
+}
+
+// CardID returns the card CHUID with the GUID extracted
+// If the CHUID is not set, the returned error wraps ErrNotFound.
+func (yk *YubiKey) CardID() (*CardID, error) {
+	return ykGetCardID(yk.tx)
+}
+
+/*
+ * From https://github.com/Yubico/yubico-piv-tool/blob/ebee7f63b85fe4373efc4d8d44cbe5fe321c158c/lib/util.c#L44
+ * Format defined in SP-800-73-4, Appendix A, Table 9
+ *
+ * FASC-N containing S9999F9999F999999F0F1F0000000000300001E encoded in
+ * 4-bit BCD with 1 bit parity. run through the tools/fasc.pl script to get
+ * bytes. This CHUID has an expiry of 2030-01-01.
+ *
+ * Defined fields:
+ *  - 0x30: FASC-N (hard-coded)
+ *  - 0x34: Card UUID / GUID (settable)
+ *  - 0x35: Exp. Date (hard-coded)
+ *  - 0x3e: Signature (hard-coded, empty)
+ *  - 0xfe: Error Detection Code (hard-coded)
+ */
+
+var chuidTemplate = []byte{
+	0x30, 0x19, 0xd4, 0xe7, 0x39, 0xda, 0x73, 0x9c, 0xed, 0x39, 0xce, 0x73, 0x9d,
+	0x83, 0x68, 0x58, 0x21, 0x08, 0x42, 0x10, 0x84, 0x21, 0xc8, 0x42, 0x10, 0xc3,
+	0xeb, 0x34, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x35, 0x08, 0x32, 0x30, 0x33, 0x30, 0x30,
+	0x31, 0x30, 0x31, 0x3e, 0x00, 0xfe, 0x00,
+}
+
+const uuidOffset = 29
+
+func ykGetCardID(tx *scTx) (*CardID, error) {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=17
+	// OID for CardId is 5FC102
+
+	cmd := apdu{
+		instruction: insGetData,
+		param1:      0x3f,
+		param2:      0xff,
+		data: []byte{
+			0x5c, // Tag list
+			0x03,
+			0x5f,
+			0xc1,
+			0x02,
+		},
+	}
+	resp, err := tx.Transmit(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=85
+	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
+	}
+
+	var (
+		id   CardID
+		guid []byte
+		v    asn1.RawValue
+	)
+	id.raw = obj
+	d := obj
+	// if the GUID is present assign it
+	for len(d) > 0 {
+		rest, err := asn1.Unmarshal(d, &v)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshaling CHUID: %v", err)
+		}
+		// GUID is tag 34 / len of 16
+		if bytes.HasPrefix(v.FullBytes, []byte{0x34}) {
+			if len(v.Bytes) != 16 {
+				return nil, fmt.Errorf("incorrect guid length")
+			}
+			guid = v.Bytes
+			break
+		}
+		d = rest
+	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=19
+	// The Global Unique Identification number (GUID) field must be present, and shall include a
+	// Card Universally Unique Identifier (UUID)
+	if len(guid) == 0 {
+		return nil, fmt.Errorf("missing guid")
+	}
+
+	copy(id.GUID[:], guid)
+
+	return &id, nil
+}
+
+// SetCardID initialize the CHUID card object using a predefined template
+func (yk *YubiKey) SetCardID(key [24]byte, id *CardID) error {
+	return ykSetCardID(yk.tx, key, id)
+}
+
+func ykSetCardID(tx *scTx, key [24]byte, id *CardID) error {
+
+	id.raw = make([]byte, len(chuidTemplate))
+	copy(id.raw, chuidTemplate)
+	copy(id.raw[uuidOffset:], id.GUID[:])
+
+	data := append([]byte{
+		0x5c, // Tag list
+		0x03,
+		0x5f,
+		0xc1,
+		0x02,
+	}, marshalASN1(0x53, id.raw)...)
+
+	cmd := apdu{
+		instruction: insPutData,
+		param1:      0x3f,
+		param2:      0xff,
+		data:        data,
+	}
+
+	if err := ykAuthenticate(tx, key, rand.Reader); err != nil {
+		return fmt.Errorf("authenticating with key: %w", err)
+	}
+
+	_, err := tx.Transmit(cmd)
+	if err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+
+	return nil
+}
