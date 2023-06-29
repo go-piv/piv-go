@@ -205,15 +205,26 @@ func (a *Attestation) addExt(e pkix.Extension) error {
 // YubiKey certificate chains up to the Yubico CA, parsing additional information
 // out of the slot certificate, such as the touch and PIN policies of a key.
 func Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
-	var v verifier
+	var v Verifier
 	return v.Verify(attestationCert, slotCert)
 }
 
-type verifier struct {
+// Verifier allows specifying options when verifying attestations produced by
+// YubiKeys.
+type Verifier struct {
+	// Root certificates to use to validate challenges. If nil, this defaults to Yubico's
+	// CA bundle.
+	//
+	// https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
+	// https://developers.yubico.com/PIV/Introduction/piv-attestation-ca.pem
+	// https://developers.yubico.com/U2F/yubico-u2f-ca-certs.txt
 	Roots *x509.CertPool
 }
 
-func (v *verifier) Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
+// Verify proves that a key was generated on a YubiKey.
+//
+// As opposed to the package level [Verify], it uses any options enabled on the [Verifier].
+func (v *Verifier) Verify(attestationCert, slotCert *x509.Certificate) (*Attestation, error) {
 	o := x509.VerifyOptions{KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
 	o.Roots = v.Roots
 	if o.Roots == nil {
