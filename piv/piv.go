@@ -142,7 +142,7 @@ type client struct {
 func (c *client) Cards() ([]string, error) {
 	ctx, err := newSCContext()
 	if err != nil {
-		return nil, fmt.Errorf("connecting to pscs: %w", err)
+		return nil, fmt.Errorf("connecting to pcsc: %w", err)
 	}
 	defer ctx.Close()
 	return ctx.ListReaders()
