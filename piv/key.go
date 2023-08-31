@@ -476,6 +476,16 @@ const (
 	TouchPolicyCached
 )
 
+// Origin represents whether a key was generated on the hardware, or has been
+// imported into it.
+type Origin int
+
+// Origins supported by this package.
+const (
+	OriginGenerated Origin = iota + 1
+	OriginImported
+)
+
 const (
 	tagPINPolicy   = 0xaa
 	tagTouchPolicy = 0xab
@@ -487,10 +497,32 @@ var pinPolicyMap = map[PINPolicy]byte{
 	PINPolicyAlways: 0x03,
 }
 
+var pinPolicyMapInv = map[byte]PINPolicy{
+	0x01: PINPolicyNever,
+	0x02: PINPolicyOnce,
+	0x03: PINPolicyAlways,
+}
+
 var touchPolicyMap = map[TouchPolicy]byte{
 	TouchPolicyNever:  0x01,
 	TouchPolicyAlways: 0x02,
 	TouchPolicyCached: 0x03,
+}
+
+var touchPolicyMapInv = map[byte]TouchPolicy{
+	0x01: TouchPolicyNever,
+	0x02: TouchPolicyAlways,
+	0x03: TouchPolicyCached,
+}
+
+var originMap = map[Origin]byte{
+	OriginGenerated: 0x01,
+	OriginImported:  0x02,
+}
+
+var originMapInv = map[byte]Origin{
+	0x01: OriginGenerated,
+	0x02: OriginImported,
 }
 
 var algorithmsMap = map[Algorithm]byte{
@@ -499,6 +531,14 @@ var algorithmsMap = map[Algorithm]byte{
 	AlgorithmEd25519: algEd25519,
 	AlgorithmRSA1024: algRSA1024,
 	AlgorithmRSA2048: algRSA2048,
+}
+
+var algorithmsMapInv = map[byte]Algorithm{
+	algECCP256: AlgorithmEC256,
+	algECCP384: AlgorithmEC384,
+	algEd25519: AlgorithmEd25519,
+	algRSA1024: AlgorithmRSA1024,
+	algRSA2048: AlgorithmRSA2048,
 }
 
 // AttestationCertificate returns the YubiKey's attestation certificate, which
@@ -552,6 +592,92 @@ func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("parsing certificate: %v", err)
 	}
 	return cert, nil
+}
+
+// KeyInfo holds unprotected metadata about a key slot.
+type KeyInfo struct {
+	Algorithm   Algorithm
+	PINPolicy   PINPolicy
+	TouchPolicy TouchPolicy
+	Origin      Origin
+	PublicKey   crypto.PublicKey
+}
+
+func (ki *KeyInfo) unmarshal(b []byte) error {
+	for len(b) > 0 {
+		var v asn1.RawValue
+		rest, err := asn1.Unmarshal(b, &v)
+		if err != nil {
+			return err
+		}
+		b = rest
+		if v.Class != 0 || v.IsCompound {
+			continue
+		}
+		var ok bool
+		switch v.Tag {
+		case 1:
+			if len(v.Bytes) != 1 {
+				return errors.New("invalid algorithm in response")
+			}
+			if ki.Algorithm, ok = algorithmsMapInv[v.Bytes[0]]; !ok {
+				return errors.New("unknown algorithm in response")
+			}
+		case 2:
+			if len(v.Bytes) != 2 {
+				return errors.New("invalid policy in response")
+			}
+			if ki.PINPolicy, ok = pinPolicyMapInv[v.Bytes[0]]; !ok {
+				return errors.New("unknown PIN policy in response")
+			}
+			if ki.TouchPolicy, ok = touchPolicyMapInv[v.Bytes[1]]; !ok {
+				return errors.New("unknown touch policy in response")
+			}
+		case 3:
+			if len(v.Bytes) != 1 {
+				return errors.New("invalid origin in response")
+			}
+			if ki.Origin, ok = originMapInv[v.Bytes[0]]; !ok {
+				return errors.New("unknown origin in response")
+			}
+		case 4:
+			ki.PublicKey, err = decodePublic(v.Bytes, ki.Algorithm)
+			if err != nil {
+				return fmt.Errorf("parse public key: %w", err)
+			}
+		default:
+			// TODO: According to the Yubico website, we get two more fields,
+			// if we pass 0x80 or 0x81 as slots:
+			//     1. Default value (for PIN/PUK and management key): Whether the
+			//        default value is used.
+			//     2. Retries (for PIN/PUK): The number of retries remaining
+			// However, it seems the reference implementation does not expect
+			// these and can not parse them out:
+			// https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-2.3.1/lib/util.c#L1529
+			// For now, we just ignore them.
+		}
+	}
+	return nil
+}
+
+// KeyInfo returns public information about the given key slot. It is only
+// supported by YubiKeys with a version >= 5.3.0.
+func (yk *YubiKey) KeyInfo(slot Slot) (KeyInfo, error) {
+	// https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html#_get_metadata
+	cmd := apdu{
+		instruction: insGetMetadata,
+		param1:      0x00,
+		param2:      byte(slot.Key),
+	}
+	resp, err := yk.tx.Transmit(cmd)
+	if err != nil {
+		return KeyInfo{}, fmt.Errorf("command failed: %w", err)
+	}
+	var ki KeyInfo
+	if err := ki.unmarshal(resp); err != nil {
+		return KeyInfo{}, err
+	}
+	return ki, nil
 }
 
 // Certificate returns the certifiate object stored in a given slot.
@@ -709,10 +835,20 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 		return nil, fmt.Errorf("command failed: %w", err)
 	}
 
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
+	obj, _, err := unmarshalASN1(resp, 1, 0x49)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+
+	return decodePublic(obj, o.Algorithm)
+}
+
+func decodePublic(b []byte, alg Algorithm) (crypto.PublicKey, error) {
 	var curve elliptic.Curve
-	switch o.Algorithm {
+	switch alg {
 	case AlgorithmRSA1024, AlgorithmRSA2048:
-		pub, err := decodeRSAPublic(resp)
+		pub, err := decodeRSAPublic(b)
 		if err != nil {
 			return nil, fmt.Errorf("decoding rsa public key: %v", err)
 		}
@@ -722,7 +858,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 	case AlgorithmEC384:
 		curve = elliptic.P384()
 	case AlgorithmEd25519:
-		pub, err := decodeEd25519Public(resp)
+		pub, err := decodeEd25519Public(b)
 		if err != nil {
 			return nil, fmt.Errorf("decoding ed25519 public key: %v", err)
 		}
@@ -730,7 +866,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 	default:
 		return nil, fmt.Errorf("unsupported algorithm")
 	}
-	pub, err := decodeECPublic(resp, curve)
+	pub, err := decodeECPublic(b, curve)
 	if err != nil {
 		return nil, fmt.Errorf("decoding ec public key: %v", err)
 	}
@@ -791,6 +927,13 @@ func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error))
 }
 
 func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
+	if supportsVersion(yk.Version(), 5, 3, 0) {
+		info, err := yk.KeyInfo(slot)
+		if err != nil {
+			return 0, fmt.Errorf("get key info: %v", err)
+		}
+		return info.PINPolicy, nil
+	}
 	cert, err := yk.Attest(slot)
 	if err != nil {
 		var e *apduErr
@@ -1180,11 +1323,7 @@ func unmarshalASN1(b []byte, class, tag int) (obj, rest []byte, err error) {
 
 func decodeECPublic(b []byte, curve elliptic.Curve) (*ecdsa.PublicKey, error) {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
-	r, _, err := unmarshalASN1(b, 1, 0x49)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal response: %v", err)
-	}
-	p, _, err := unmarshalASN1(r, 2, 0x06)
+	p, _, err := unmarshalASN1(b, 2, 0x06)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal points: %v", err)
 	}
@@ -1210,11 +1349,7 @@ func decodeECPublic(b []byte, curve elliptic.Curve) (*ecdsa.PublicKey, error) {
 func decodeEd25519Public(b []byte) (ed25519.PublicKey, error) {
 	// Adaptation of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
-	r, _, err := unmarshalASN1(b, 1, 0x49)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal response: %v", err)
-	}
-	p, _, err := unmarshalASN1(r, 2, 0x06)
+	p, _, err := unmarshalASN1(b, 2, 0x06)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal points: %v", err)
 	}
@@ -1226,11 +1361,7 @@ func decodeEd25519Public(b []byte) (ed25519.PublicKey, error) {
 
 func decodeRSAPublic(b []byte) (*rsa.PublicKey, error) {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
-	r, _, err := unmarshalASN1(b, 1, 0x49)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal response: %v", err)
-	}
-	mod, r, err := unmarshalASN1(r, 2, 0x01)
+	mod, r, err := unmarshalASN1(b, 2, 0x01)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal modulus: %v", err)
 	}
