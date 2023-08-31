@@ -93,6 +93,7 @@ const (
 	insSetPINRetries = 0xfa
 	insAttest        = 0xf9
 	insGetSerial     = 0xf8
+	insGetMetadata   = 0xf7
 )
 
 // YubiKey is an exclusive open connection to a YubiKey smart card. While open,
@@ -807,4 +808,14 @@ func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
 		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
+}
+
+func supportsVersion(v Version, major, minor, patch int) bool {
+	if v.Major != major {
+		return v.Major > major
+	}
+	if v.Minor != minor {
+		return v.Minor > minor
+	}
+	return v.Patch >= patch
 }
