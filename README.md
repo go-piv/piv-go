@@ -28,10 +28,10 @@ The piv-go package can be used to generate keys and store certificates on a
 YubiKey. This uses a management key to generate new keys on the applet, and a
 PIN for signing operations. The package provides default PIN values. If the PIV
 credentials on the YubiKey haven't been modified, the follow code generates a
-new EC key on the smartcard, and provides a signing interface:
+new EC key on the smart card, and provides a signing interface:
 
 ```go
-// List all smartcards connected to the system.
+// List all smart cards connected to the system.
 cards, err := piv.Cards()
 if err != nil {
 	// ...
@@ -175,7 +175,7 @@ s := &http.Server{
 
 ### Attestation
 
-YubiKeys can attest that a particular key was generated on the smartcard, and
+YubiKeys can attest that a particular key was generated on the smart card, and
 that it was set with specific PIN and touch policies. The client generates a
 key, then asks the YubiKey to sign an attestation certificate:
 
@@ -265,9 +265,9 @@ Please notice the following:
 
 >Windows support is best effort due to lack of test hardware. This means the maintainers will take patches for Windows, but if you encounter a bug or the build is broken, you may be asked to fix it.
 
-## Non-YubiKey smartcards
+## Non-YubiKey smart cards
 
-Non-YubiKey smartcards that implement the PIV standard are not officially supported due to a lack of test hardware. However, PRs that fix integrations with other smartcards are welcome, and piv-go will attempt to not break that support.  
+Non-YubiKey smart cards that implement the PIV standard are not officially supported due to a lack of test hardware. However, PRs that fix integrations with other smart cards are welcome, and piv-go will attempt to not break that support.  
 
 ## Testing
 
