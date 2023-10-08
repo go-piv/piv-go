@@ -876,7 +876,6 @@ func TestSetRSAPrivateKey(t *testing.T) {
 		slot    Slot
 		wantErr error
 	}{
-
 		{
 			name:    "rsa 1024",
 			bits:    1024,

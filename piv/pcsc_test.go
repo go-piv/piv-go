@@ -93,7 +93,7 @@ func TestTransaction(t *testing.T) {
 }
 
 func TestErrors(t *testing.T) {
-	var tests = []struct {
+	tests := []struct {
 		sw1, sw2      byte
 		isErrNotFound bool
 		isAuthErr     bool
