@@ -25,7 +25,7 @@ jobs:
     - name: Install libpcsc
       run: sudo apt-get install -y libpcsclite-dev pcscd pcsc-tools
     - name: Test
-      run: "make test"
+      run: go test -v ./...
   build-windows:
     strategy:
       matrix:
@@ -41,6 +41,6 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
     - name: Test
-      run: "make build"
+      run: go build ./...
       env:
         CGO_ENABLED: 0
