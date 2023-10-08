@@ -24,6 +24,8 @@ import (
 	"math/bits"
 	"strings"
 	"testing"
+
+	"github.com/ebfe/scard"
 )
 
 // canModifyYubiKey indicates whether the test running has constented to
@@ -35,8 +37,8 @@ func init() {
 		"Flag required to run tests that access the yubikey")
 }
 
-func testGetVersion(t *testing.T, h *scHandle) {
-	tx, err := h.Begin()
+func testGetVersion(t *testing.T, h *scard.Card) {
+	tx, err := newTx(h)
 	if err != nil {
 		t.Fatalf("new transaction: %v", err)
 	}
@@ -121,12 +123,12 @@ func TestMultipleConnections(t *testing.T) {
 		if oerr == nil {
 			t.Fatalf("expected second open operation to fail")
 		}
-		var e *scErr
+		var e scard.Error
 		if !errors.As(oerr, &e) {
-			t.Fatalf("expected scErr, got %v", oerr)
+			t.Fatalf("expected scard.Error, got %T", oerr)
 		}
-		if e.rc != 0x8010000B {
-			t.Fatalf("expected return code 0x8010000B, got 0x%x", e.rc)
+		if !errors.Is(e, scard.ErrSharingViolation) {
+			t.Fatalf("expected return code 0x8010000B (sharing vialation), got 0x%x", e)
 		}
 		return
 	}

@@ -18,15 +18,17 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/ebfe/scard"
 )
 
-func runContextTest(t *testing.T, f func(t *testing.T, c *scContext)) {
-	ctx, err := newSCContext()
+func runContextTest(t *testing.T, f func(t *testing.T, c *scard.Context)) {
+	ctx, err := scard.EstablishContext()
 	if err != nil {
 		t.Fatalf("creating context: %v", err)
 	}
 	defer func() {
-		if err := ctx.Close(); err != nil {
+		if err := ctx.Release(); err != nil {
 			t.Errorf("closing context: %v", err)
 		}
 	}()
@@ -34,21 +36,21 @@ func runContextTest(t *testing.T, f func(t *testing.T, c *scContext)) {
 }
 
 func TestContextClose(t *testing.T) {
-	runContextTest(t, func(t *testing.T, c *scContext) {})
+	runContextTest(t, func(t *testing.T, c *scard.Context) {})
 }
 
 func TestContextListReaders(t *testing.T) {
 	runContextTest(t, testContextListReaders)
 }
 
-func testContextListReaders(t *testing.T, c *scContext) {
+func testContextListReaders(t *testing.T, c *scard.Context) {
 	if _, err := c.ListReaders(); err != nil {
 		t.Errorf("listing readers: %v", err)
 	}
 }
 
-func runHandleTest(t *testing.T, f func(t *testing.T, h *scHandle)) {
-	runContextTest(t, func(t *testing.T, c *scContext) {
+func runHandleTest(t *testing.T, f func(t *testing.T, h *scard.Card)) {
+	runContextTest(t, func(t *testing.T, c *scard.Context) {
 		readers, err := c.ListReaders()
 		if err != nil {
 			t.Fatalf("listing smartcard readers: %v", err)
@@ -63,12 +65,12 @@ func runHandleTest(t *testing.T, f func(t *testing.T, h *scHandle)) {
 		if reader == "" {
 			t.Skip("could not find yubikey, skipping testing")
 		}
-		h, err := c.Connect(reader)
+		h, err := c.Connect(reader, scard.ShareExclusive, scard.ProtocolT1)
 		if err != nil {
 			t.Fatalf("connecting to %s: %v", reader, err)
 		}
 		defer func() {
-			if err := h.Close(); err != nil {
+			if err := h.Disconnect(scard.LeaveCard); err != nil {
 				t.Errorf("disconnecting from handle: %v", err)
 			}
 		}()
@@ -77,12 +79,12 @@ func runHandleTest(t *testing.T, f func(t *testing.T, h *scHandle)) {
 }
 
 func TestHandle(t *testing.T) {
-	runHandleTest(t, func(t *testing.T, h *scHandle) {})
+	runHandleTest(t, func(t *testing.T, h *scard.Card) {})
 }
 
 func TestTransaction(t *testing.T) {
-	runHandleTest(t, func(t *testing.T, h *scHandle) {
-		tx, err := h.Begin()
+	runHandleTest(t, func(t *testing.T, h *scard.Card) {
+		tx, err := newTx(h)
 		if err != nil {
 			t.Fatalf("beginning transaction: %v", err)
 		}

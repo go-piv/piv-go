@@ -17,19 +17,9 @@ package piv
 import (
 	"errors"
 	"fmt"
+
+	"github.com/ebfe/scard"
 )
-
-type scErr struct {
-	// rc holds the return code for a given call.
-	rc int64
-}
-
-func (e *scErr) Error() string {
-	if msg, ok := pcscErrMsgs[e.rc]; ok {
-		return msg
-	}
-	return fmt.Sprintf("unknown pcsc return code 0x%08x", e.rc)
-}
 
 // AuthErr is an error indicating an authentication error occurred (wrong PIN or blocked).
 type AuthErr struct {
@@ -132,6 +122,42 @@ type apdu struct {
 	param1      byte
 	param2      byte
 	data        []byte
+}
+
+type scTx struct {
+	*scard.Card
+}
+
+func newTx(h *scard.Card) (*scTx, error) {
+	if err := h.BeginTransaction(); err != nil {
+		return nil, err
+	}
+
+	return &scTx{
+		Card: h,
+	}, nil
+}
+
+func (t *scTx) Close() error {
+	return t.Card.EndTransaction(scard.LeaveCard)
+}
+
+func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
+	resp, err := t.Card.Transmit(req)
+	if err != nil {
+		return false, nil, fmt.Errorf("transmitting request: %w", err)
+	} else if len(resp) < 2 {
+		return false, nil, fmt.Errorf("scard response too short: %d", len(resp))
+	}
+	sw1 := resp[len(resp)-2]
+	sw2 := resp[len(resp)-1]
+	if sw1 == 0x90 && sw2 == 0x00 {
+		return false, resp[:len(resp)-2], nil
+	}
+	if sw1 == 0x61 {
+		return true, resp[:len(resp)-2], nil
+	}
+	return false, nil, &apduErr{sw1, sw2}
 }
 
 func (t *scTx) Transmit(d apdu) ([]byte, error) {

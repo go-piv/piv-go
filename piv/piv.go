@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+
+	"github.com/ebfe/scard"
 )
 
 var (
@@ -101,8 +103,8 @@ const (
 //
 // To release the connection, call the Close method.
 type YubiKey struct {
-	ctx *scContext
-	h   *scHandle
+	ctx *scard.Context
+	h   *scard.Card
 	tx  *scTx
 
 	rand io.Reader
@@ -117,8 +119,8 @@ type YubiKey struct {
 
 // Close releases the connection to the smart card.
 func (yk *YubiKey) Close() error {
-	err1 := yk.h.Close()
-	err2 := yk.ctx.Close()
+	err1 := yk.h.Disconnect(scard.LeaveCard)
+	err2 := yk.ctx.Release()
 	if err1 == nil {
 		return err2
 	}
@@ -141,26 +143,26 @@ type client struct {
 }
 
 func (c *client) Cards() ([]string, error) {
-	ctx, err := newSCContext()
+	ctx, err := scard.EstablishContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pcsc: %w", err)
 	}
-	defer ctx.Close()
+	defer ctx.Release()
 	return ctx.ListReaders()
 }
 
 func (c *client) Open(card string) (*YubiKey, error) {
-	ctx, err := newSCContext()
+	ctx, err := scard.EstablishContext()
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
 	}
 
-	h, err := ctx.Connect(card)
+	h, err := ctx.Connect(card, scard.ShareExclusive, scard.ProtocolT1)
 	if err != nil {
-		ctx.Close()
+		ctx.Release()
 		return nil, fmt.Errorf("connecting to smart card: %w", err)
 	}
-	tx, err := h.Begin()
+	tx, err := newTx(h)
 	if err != nil {
 		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
 	}
