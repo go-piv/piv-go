@@ -230,19 +230,19 @@ On MacOS, piv-go doesn't require any additional packages.
 To build on Linux, piv-go requires PCSC lite. To install on Debian-based
 distros, run:
 
-```
+```shell
 sudo apt-get install libpcsclite-dev
 ```
 
 On Fedora:
 
-```
+```shell
 sudo yum install pcsc-lite-devel
 ```
 
 On CentOS:
 
-```
+```shell
 sudo yum install 'dnf-command(config-manager)'
 sudo yum config-manager --set-enabled PowerTools
 sudo yum install pcsc-lite-devel
@@ -250,7 +250,7 @@ sudo yum install pcsc-lite-devel
 
 On FreeBSD:
 
-```
+```shell
 sudo pkg install pcsc-lite
 ```
 
@@ -275,13 +275,13 @@ Tests automatically find connected available YubiKeys, but won't modify the
 smart card without the `--wipe-yubikey` flag. To let the tests modify your
 YubiKey's PIV applet, run:
 
-```
+```shell
 go test -v ./piv --wipe-yubikey
 ```
 
 Longer tests can be skipped with the `--test.short` flag.
 
-```
+```shell
 go test -v --short ./piv --wipe-yubikey
 ```
 
