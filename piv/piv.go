@@ -450,15 +450,13 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 // are triple-des keys, however padding isn't verified. To generate a new key,
 // generate 24 random bytes.
 //
-//		var newKey [24]byte
-//		if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
-//			// ...
-//		}
-//		if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey); err != nil {
-//			// ...
-//		}
-//
-//
+//	var newKey [24]byte
+//	if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
+//		// ...
+//	}
+//	if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey); err != nil {
+//		// ...
+//	}
 func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
 	if err := ykAuthenticate(yk.tx, oldKey, yk.rand); err != nil {
 		return fmt.Errorf("authenticating with old key: %w", err)
@@ -494,17 +492,16 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 //
 // To generate a new PIN, use the crypto/rand package.
 //
-//		// Generate a 6 character PIN.
-//		newPINInt, err := rand.Int(rand.Reader, bit.NewInt(1_000_000))
-//		if err != nil {
-//			// ...
-//		}
-//		// Format with leading zeros.
-//		newPIN := fmt.Sprintf("%06d", newPINInt)
-//		if err := yk.SetPIN(piv.DefaultPIN, newPIN); err != nil {
-//			// ...
-//		}
-//
+//	// Generate a 6 character PIN.
+//	newPINInt, err := rand.Int(rand.Reader, bit.NewInt(1_000_000))
+//	if err != nil {
+//		// ...
+//	}
+//	// Format with leading zeros.
+//	newPIN := fmt.Sprintf("%06d", newPINInt)
+//	if err := yk.SetPIN(piv.DefaultPIN, newPIN); err != nil {
+//		// ...
+//	}
 func (yk *YubiKey) SetPIN(oldPIN, newPIN string) error {
 	return ykChangePIN(yk.tx, oldPIN, newPIN)
 }
@@ -555,17 +552,16 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 //
 // To generate a new PUK, use the crypto/rand package.
 //
-//		// Generate a 8 character PUK.
-//		newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
-//		if err != nil {
-//			// ...
-//		}
-//		// Format with leading zeros.
-//		newPUK := fmt.Sprintf("%08d", newPUKInt)
-//		if err := yk.SetPUK(piv.DefaultPUK, newPUK); err != nil {
-//			// ...
-//		}
-//
+//	// Generate a 8 character PUK.
+//	newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
+//	if err != nil {
+//		// ...
+//	}
+//	// Format with leading zeros.
+//	newPUK := fmt.Sprintf("%08d", newPUKInt)
+//	if err := yk.SetPUK(piv.DefaultPUK, newPUK); err != nil {
+//		// ...
+//	}
 func (yk *YubiKey) SetPUK(oldPUK, newPUK string) error {
 	return ykChangePUK(yk.tx, oldPUK, newPUK)
 }
