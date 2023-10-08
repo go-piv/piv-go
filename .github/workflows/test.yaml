@@ -11,7 +11,7 @@ jobs:
   build:
     strategy:
       matrix:
-        go-version: [1.19.x, 1.20.x]
+        go-version: [1.20.x, 1.21.x]
     name: Linux
     runs-on: ubuntu-latest
     steps:
@@ -29,7 +29,7 @@ jobs:
   build-windows:
     strategy:
       matrix:
-        go-version: [1.19.x, 1.20.x]
+        go-version: [1.20.x, 1.21.x]
     name: Windows
     runs-on: windows-latest
     steps:
