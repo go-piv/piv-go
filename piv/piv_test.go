@@ -91,8 +91,8 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 }
 
 func TestNewYubiKey(t *testing.T) {
-	_, close := newTestYubiKey(t)
-	defer close()
+	_, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 }
 
 func TestMultipleConnections(t *testing.T) {
@@ -134,8 +134,8 @@ func TestMultipleConnections(t *testing.T) {
 }
 
 func TestYubiKeySerial(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	if _, err := yk.Serial(); err != nil {
 		t.Fatalf("getting serial number: %v", err)
@@ -143,8 +143,8 @@ func TestYubiKeySerial(t *testing.T) {
 }
 
 func TestYubiKeyLoginNeeded(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	testRequiresVersion(t, yk, 4, 3, 0)
 
@@ -160,8 +160,8 @@ func TestYubiKeyLoginNeeded(t *testing.T) {
 }
 
 func TestYubiKeyPINRetries(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 	retries, err := yk.Retries()
 	if err != nil {
 		t.Fatalf("getting retries: %v", err)
@@ -175,8 +175,8 @@ func TestYubiKeyReset(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 	if err := yk.Reset(); err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
 	}
@@ -186,8 +186,8 @@ func TestYubiKeyReset(t *testing.T) {
 }
 
 func TestYubiKeyLogin(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	if err := yk.VerifyPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
@@ -195,8 +195,8 @@ func TestYubiKeyLogin(t *testing.T) {
 }
 
 func TestYubiKeyAuthenticate(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	if err := yk.authManagementKey(DefaultManagementKey); err != nil {
 		t.Errorf("authenticating: %v", err)
@@ -204,8 +204,8 @@ func TestYubiKeyAuthenticate(t *testing.T) {
 }
 
 func TestYubiKeySetManagementKey(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	var mgmtKey [24]byte
 	if _, err := io.ReadFull(rand.Reader, mgmtKey[:]); err != nil {
@@ -224,8 +224,8 @@ func TestYubiKeySetManagementKey(t *testing.T) {
 }
 
 func TestYubiKeyUnblockPIN(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	badPIN := "0"
 	for {
@@ -251,8 +251,8 @@ func TestYubiKeyUnblockPIN(t *testing.T) {
 }
 
 func TestYubiKeyChangePIN(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	newPIN := "654321"
 	if err := yk.SetPIN(newPIN, newPIN); err == nil {
@@ -267,8 +267,8 @@ func TestYubiKeyChangePIN(t *testing.T) {
 }
 
 func TestYubiKeyChangePUK(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	newPUK := "87654321"
 	if err := yk.SetPUK(newPUK, newPUK); err == nil {
@@ -283,8 +283,8 @@ func TestYubiKeyChangePUK(t *testing.T) {
 }
 
 func TestChangeManagementKey(t *testing.T) {
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	var newKey [24]byte
 	if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
@@ -312,15 +312,15 @@ func TestMetadata(t *testing.T) {
 		t.Skip("skipping test in short mode.")
 	}
 	func() {
-		yk, close := newTestYubiKey(t)
-		defer close()
+		yk, closeFunc := newTestYubiKey(t)
+		defer closeFunc()
 		if err := yk.Reset(); err != nil {
 			t.Fatalf("resetting yubikey: %v", err)
 		}
 	}()
 
-	yk, close := newTestYubiKey(t)
-	defer close()
+	yk, closeFunc := newTestYubiKey(t)
+	defer closeFunc()
 
 	if m, err := yk.Metadata(DefaultPIN); err != nil {
 		t.Errorf("getting metadata: %v", err)
