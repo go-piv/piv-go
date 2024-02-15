@@ -25,6 +25,13 @@ const (
 	// GET DATA with odd INS (CB) is used for reading data from EF.DIR and/or EF.ATR/INFO.
 	insGetDataA = 0xca
 
+	// selectData is the instruction to select data to get from a card.
+	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 57
+	// 7.2.5 SELECT DATA.
+	// P1 = Occurrence number of DOs with same tag (DO 7F21).
+	// P2 = First or only occurrence of a DO after skipping P1 occurrences and Return the data control Information (DO 62).
+	insSelectData = 0xa5
+
 	// insGetGPGAppletVersion
 	// https://developers.yubico.com/ykneo-openpgp/SecurityAdvisory%202015-04-14.html
 	insGetGPGAppletVersion = 0xf1
@@ -132,6 +139,10 @@ const (
 	paramOpenGPGAsymmetricGenerate = paramAsymmetricCryptoMechanism // 0x80
 	paramOpenGPGAsymmetricRead     = paramAsymmetricParameter       // 0x81
 
+	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 51.
+	// 7.2.1 SELECT.
+	paramOpenGPGASelectApplication = 0x04
+
 	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 74
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	openGpgModulusTag  = "3FC9.81"
@@ -146,6 +157,10 @@ const (
 
 	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 23
 	paramOpenGPGGetRetries = 0xC4
+
+	// FIXME: add the yubikey and openpgp manual refs.
+	paramOpenGPGGetAttestCertParam1 = 0x00
+	paramOpenGPGGetAttestCertParam2 = 0xFC
 )
 
 // KeyType is for indexing the keys from a yubikey.
@@ -154,6 +169,10 @@ const (
 // Application Related Data.
 // 6E.73.DE == Key Information.
 type KeyType byte
+
+func (k KeyType) Offset() int {
+	return int(k)*2 + 1
+}
 
 const (
 	// SignatureKey is at  offset 0.
@@ -168,20 +187,56 @@ const (
 	// 6E.73.C3 .
 	AuthenticationKey KeyType = 2
 	KeyTypeLast               = AuthenticationKey
-	KeyTypeUnknown            = 0xFF
+
+	// AttestKey is specific to yubikeys.
+	AttestKey KeyType = 3
+
+	KeyTypeUnknown = 0xFF
+
+	KeyTypeSize = int((KeyTypeLast + 1) * 2)
+)
+
+const (
+	cSignature      = "Signature"
+	cDecryption     = "Decryption"
+	cAuthentication = "Authentication"
+	cAttestation    = "Attestation"
+	cUnknown        = "Unknown"
 )
 
 func (k KeyType) String() string {
 	switch k {
 	case SignatureKey:
-		return "Signature"
+		return cSignature
 	case DecryptionKey:
-		return "Decryption"
+		return cDecryption
 	case AuthenticationKey:
-		return "Authentication"
-	}
+		return cAuthentication
+	case AttestKey:
+		return cAttestation
+	case KeyTypeUnknown:
+		return cUnknown
 
-	return fmt.Sprintf("unknown: %d", k)
+	default:
+		return fmt.Sprintf("unknown: %d", k)
+	}
+}
+
+func KeyTypeFromString(s string) KeyType {
+	switch s {
+	case cSignature:
+		return SignatureKey
+	case cDecryption:
+		return DecryptionKey
+	case cAuthentication:
+		return AuthenticationKey
+	case cAttestation:
+		return AttestKey
+	case cUnknown:
+		return KeyTypeUnknown
+	default:
+		return KeyTypeUnknown
+	}
 }
 
 // KeyOrigin is for determining the Origin of a key.
@@ -196,6 +251,8 @@ const (
 	KeyGeneratedByCard KeyOrigin = 1
 	KeyImportedToCard  KeyOrigin = 2
 	KeyOriginLast                = KeyImportedToCard
+	// KeyOriginAny allows a key of any origin.
+	KeyOriginAny = 3
 )
 
 func (k KeyOrigin) String() string {
@@ -309,6 +366,20 @@ const (
 	// byte 10 (0xA) MSE command for key numbers 2 (DEC) and 3 (AUT).
 	MSECommandNotSupported = 0x00
 	MSECommandSupported    = 0x01
+
+	// minPW1Length is the minimum length of the PW1 pin.
+	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 20
+	// 4.3.3 PIN block format 2
+	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 53
+	// 7.2.2 VERIFY.
+	minPW1Length = 6
+
+	// minPW3Length is the minimum length of the PW3 pin.
+	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 20
+	// 4.3.3 PIN block format 2
+	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 53
+	// 7.2.2 VERIFY.
+	minPW3Length = 8
 )
 
 // SecureMessagingAlgorithm the type of secure messaging supported.
@@ -345,12 +416,16 @@ func (s SecureMessagingAlgorithm) String() string {
 }
 
 var (
-	ErrTooShort         = errors.New("error too short")
-	ErrNoSuchTag        = errors.New("error too short")
-	ErrNoSuchAlgorithm  = errors.New("unable to get key algorithm")
-	ErrUnknownKeyOrigin = errors.New("unknown key origin")
-	ErrUnknownKeyType   = errors.New("unknown key type")
-	ErrKeyNotPresent    = errors.New("key not present")
+	ErrTooShort            = errors.New("error data too short")
+	ErrNoSuchTag           = errors.New("error no such tag found")
+	ErrNoSuchAlgorithm     = errors.New("unable to get key algorithm")
+	ErrUnknownKeyOrigin    = errors.New("unknown key origin")
+	ErrUnknownKeyType      = errors.New("unknown key type")
+	ErrKeyNotPresent       = errors.New("key not present")
+	ErrNoPublicKeyModulus  = errors.New("crypto/rsa: missing public modulus")
+	ErrNoPublicKeyExponent = errors.New("crypto/rsa: missing public exponent")
+	ErrPublicExponentSmall = errors.New("crypto/rsa: public exponent too small")
+	ErrPublicExponentLarge = errors.New("crypto/rsa: public exponent too large")
 )
 
 // GpgData holds data about the GPG functionality of the card.
@@ -413,6 +488,39 @@ type GpgData struct {
 
 func (g *GpgData) DumpTLV() string {
 	return bertlv.MakeJSONString(g.tlvValues)
+}
+
+func (g *GpgData) Copy(src *GpgData) {
+	g.debug = src.debug
+	g.SecureMessagingSupported = src.SecureMessagingSupported
+	g.GetChallengeSupported = src.GetChallengeSupported
+	g.KeyImportSupported = src.KeyImportSupported
+	g.PWStatusChangeable = src.PWStatusChangeable
+	g.PrivateUseDOsSupported = src.PrivateUseDOsSupported
+	g.AlgorithmAttributesChangeable = src.AlgorithmAttributesChangeable
+	g.SupportsPSODecryptionEncryptionWithAES = src.SupportsPSODecryptionEncryptionWithAES
+	g.KDFSupported = src.KDFSupported
+	g.PinBlock2Supported = src.PinBlock2Supported
+	g.MSECommandSupported = src.MSECommandSupported
+	g.SerialInt = src.SerialInt
+	g.Serial = src.Serial
+	g.LongName = src.LongName
+	g.CardHolder = src.CardHolder
+	g.Rid = src.Rid
+	g.Application = src.Application
+	g.Version = src.Version
+	g.AppletVersion = src.AppletVersion
+	g.Manufacturer = src.Manufacturer
+	g.Reader = src.Reader
+	g.SecureMessaging = src.SecureMessaging
+	g.MaximumChallengeLength = src.MaximumChallengeLength
+	g.MaximumCardholderCertificatesLength = src.MaximumCardholderCertificatesLength
+	g.MaximumSpecialDOsLength = src.MaximumSpecialDOsLength
+	if src.tlvValues != nil {
+		g.tlvValues = src.tlvValues
+	} else {
+		g.tlvValues = bertlv.TLVData{}
+	}
 }
 
 // UpperCaseHexString is the same as hex.EncodeToString but all uppercase.

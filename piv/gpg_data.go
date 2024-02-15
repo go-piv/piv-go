@@ -57,8 +57,10 @@ func (g *GpgData) update() error {
 
 	// card.cardholder = ''.join(chr(x) for x in card.tv['65.5B'])
 	cardHolderBytes, _ := g.GetTag("65.5B", 0)
-	// probably an issue, need to see if it's UTF-8 or ASCII or what from the pgp spec
-	g.CardHolder = string(cardHolderBytes)
+	// cardholder is UTF-8.
+	// However, we need to fix it up a little.
+	// < becomes space, and the first << becomes a newline.
+	g.CardHolder = ParseCardHolderName(cardHolderBytes)
 
 	// if args.fingerprint is not None and (
 	//	args.fingerprint == keyfingerprint(card, 0) or
@@ -103,9 +105,17 @@ const infoTemplate = `
 
 // String makes a GpgData struct readable.
 func (g *GpgData) String() (string, error) {
+	if g == nil {
+		err := fmt.Errorf("nil key for String: %w", ErrKeyNotPresent)
+
+		return "", err
+	}
+
 	t1 := template.New("GpgData")
 	t1, err := t1.Parse(infoTemplate)
 	if err != nil {
+		err = fmt.Errorf("failed to parse template for String: %w", err)
+
 		return "", err
 	}
 
@@ -113,6 +123,8 @@ func (g *GpgData) String() (string, error) {
 
 	err = t1.Execute(&b, *g)
 	if err != nil {
+		err = fmt.Errorf("failed to execute template for String: %w", err)
+
 		return "", err
 	}
 
@@ -120,6 +132,7 @@ func (g *GpgData) String() (string, error) {
 }
 
 // Algorithm returns the Algorithm of the key at index.
+//
 //	def keyalg(card, n):
 //	   ka = card.tv[f'6E.73.C{n+1}']
 //	   if 1 <= ka[0] <= 3:		# RSA
@@ -127,7 +140,14 @@ func (g *GpgData) String() (string, error) {
 //	   else:
 //		   return f'Alg={ka[0]:<4d}'
 func (g *GpgData) Algorithm(keyType KeyType) (string, error) {
-	key := ""
+	if g == nil {
+		err := fmt.Errorf("nil key for Algorithm: %w", ErrKeyNotPresent)
+
+		return "", err
+	}
+
+	var key string
+
 	switch keyType {
 	case SignatureKey:
 		key = keyAlgorithmSignatureAttributesTag
@@ -135,6 +155,8 @@ func (g *GpgData) Algorithm(keyType KeyType) (string, error) {
 		key = keyAlgorithmDecryptionAttributesTag
 	case AuthenticationKey:
 		key = keyAlgorithmAuthenticationAttributesTag
+	case AttestKey:
+		fallthrough
 	default:
 		return "", fmt.Errorf("%w : unknown value: %d", ErrNoSuchTag, keyType)
 	}
@@ -160,18 +182,54 @@ func (g *GpgData) Algorithm(keyType KeyType) (string, error) {
 }
 
 // Fingerprint returns the Fingerprint of the key at index.
+//
 //	def keyfingerprint(card, n):
 //	   kf = card.tv['6E.73.C5'][n*20:n*20+20]
 //	   return ''.join(f'{x:02X}' for x in kf)
 func (g *GpgData) Fingerprint(keyType KeyType) (string, error) {
+	if g == nil {
+		err := fmt.Errorf("nil key for Fingerprint: %w", ErrKeyNotPresent)
+
+		return "", err
+	}
+
 	offset, expectedLen := getKeyLen(keyType, keyFingerprintLen)
 
 	data, err := g.GetTag(keyInformationTag, expectedLen)
 	if err != nil {
+		err = fmt.Errorf("unable to get tag %s for Fingerprint(%s): %w", keyInformationTag, keyType, err)
+
 		return "", err
 	}
 
 	return UpperCaseHexString(data[offset:expectedLen]), nil
+}
+
+// GetCardHolder returns the Cardholder of the key.
+func (g *GpgData) GetCardHolder() string {
+	if g == nil {
+		return ""
+	}
+
+	return g.CardHolder
+}
+
+// GetVersion returns the version of the key.
+func (g *GpgData) GetVersion() string {
+	if g == nil {
+		return ""
+	}
+
+	return g.Version
+}
+
+// GetAppletVersion returns the version of the applet.
+func (g *GpgData) GetAppletVersion() string {
+	if g == nil {
+		return ""
+	}
+
+	return g.AppletVersion
 }
 
 // def print_keys(card):
@@ -180,14 +238,23 @@ func (g *GpgData) Fingerprint(keyType KeyType) (string, error) {
 
 // ID returns the ID of the key at index.
 // ID is the last 8 bytes of the fingerprint.
+//
 //	def keyid(card, n):
 //	   kf = card.tv['6E.73.C5'][n*20:n*20+20]
 //	   return ''.join(f'{x:02X}' for x in kf[-8:])
 func (g *GpgData) ID(keyType KeyType) (string, error) {
+	if g == nil {
+		err := fmt.Errorf("nil key for ID: %w", ErrKeyNotPresent)
+
+		return "", err
+	}
+
 	_, expectedLen := getKeyLen(keyType, keyFingerprintLen)
 
 	data, err := g.GetTag(keyInformationTag, expectedLen)
 	if err != nil {
+		err = fmt.Errorf("unable to get tag %s for ID(%s): %w", keyInformationTag, keyType, err)
+
 		return "", err
 	}
 
@@ -198,16 +265,27 @@ func (g *GpgData) ID(keyType KeyType) (string, error) {
 }
 
 // Date returns the Date of the key at index.
+//
 //	def keydate(card, n):
 //	   kd = card.tv['6E.73.CD'][n*4:n*4+4]
 //	   timestamp = (kd[0]<<24)|(kd[1]<<16)|(kd[2]<<8)|kd[3]
 //	   return datetime.fromtimestamp(timestamp)		# TODO fix time zone
 func (g *GpgData) Date(keyType KeyType) (time.Time, error) {
+	rv := time.Time{}
+
+	if g == nil {
+		err := fmt.Errorf("nil key for Date: %w", ErrKeyNotPresent)
+
+		return rv, err
+	}
+
 	offset, expectedLen := getKeyLen(keyType, keyDateLen)
 
 	data, err := g.GetTag(keyDateTag, expectedLen)
 	if err != nil {
-		return time.Time{}, err
+		err = fmt.Errorf("unable to get tag %s for Date(%s): %w", keyDateTag, keyType, err)
+
+		return rv, err
 	}
 
 	dateData := data[offset:expectedLen]
@@ -218,27 +296,36 @@ func (g *GpgData) Date(keyType KeyType) (time.Time, error) {
 }
 
 // Origin returns the Origin of the key at index.
+//
 //	def keyorigin(card, n):
 //	   if '6E.73.DE' in card.tv:
 //		   return (['empty    ','generated','imported '])[card.tv['6E.73.DE'][2*n+1]]
 //	   else:
 //		   return ''
 func (g *GpgData) Origin(keyType KeyType) (KeyOrigin, error) {
-	offset := int(keyType)*2 + 1
+	rv := KeyNotPresent
+
+	if g == nil {
+		err := fmt.Errorf("nil key for Origin: %w", ErrKeyNotPresent)
+
+		return rv, err
+	}
 
 	if tagLen, hasDate := g.HasTag(keyOriginAttributesTag); tagLen == 0 || !hasDate {
 		// If the tag doesn't exist it's not present.
-		return KeyNotPresent, nil
+		return KeyNotPresent, fmt.Errorf("%w: key type %s not present", ErrKeyNotPresent, keyType)
 	}
 
-	data, err := g.GetTag(keyOriginAttributesTag, 6)
+	data, err := g.GetTag(keyOriginAttributesTag, KeyTypeSize)
 	if err != nil {
 		return KeyNotPresent, err
 	}
 
-	keyValue := uint(data[offset])
+	keyValue := uint(data[keyType.Offset()])
 	if keyValue > uint(KeyOriginLast) {
-		return KeyNotPresent, fmt.Errorf("%w: [%d] > KeyOriginLast(%d)", ErrUnknownKeyOrigin, keyValue, KeyOriginLast)
+		err = fmt.Errorf("keyValue: [%d] > KeyOriginLast:[%d] for Origin(%s): %w", keyValue, KeyOriginLast, keyType, ErrUnknownKeyOrigin)
+
+		return rv, err
 	}
 
 	return KeyOrigin(keyValue), nil
@@ -253,8 +340,16 @@ func (g *GpgData) dprintf(format string, a ...any) {
 }
 
 func ExportRsaPublicKeyAsPemStr(publicKey *rsa.PublicKey) (string, error) {
+	if publicKey == nil {
+		err := fmt.Errorf("nil key for ExportRsaPublicKeyAsPemStr: %w", ErrKeyNotPresent)
+
+		return "", err
+	}
+
 	publicKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
+		err = fmt.Errorf("failed to marshal for ExportRsaPublicKeyAsPemStr: %w", err)
+
 		return "", err
 	}
 
@@ -271,19 +366,33 @@ func ExportRsaPublicKeyAsPemStr(publicKey *rsa.PublicKey) (string, error) {
 // tagBytes returns a []byte from the 1 based offset.  This is here to make it easier to compare to the spec.
 // The spec is 1 based.
 // We expect 2,3 to return b[1,2] which is 2 bytes #1 and #2.
-func getBytesWith1BasedIndexing(b []byte, start, end int) []byte {
+func getBytesWith1BasedIndexing(b []byte, start, end int) ([]byte, error) {
 	// since start is 1 shorter, end is 1 longer.
-	return b[start-1 : end]
+	if b == nil || start > len(b) || end > len(b) {
+		return nil, ErrNotFound
+	}
+
+	return b[start-1 : end], nil
 }
 
 // getByteWith1BasedIndexing returns a byte from the 1 based offset.  This is here to make it easier to compare to the spec.
 // The spec is 1 based.
 // we expect 2,3 to return b[1,2] which is 2 bytes #1 and #2.
-func getByteWith1BasedIndexing(b []byte, index int) byte {
-	return b[index-1]
+func getByteWith1BasedIndexing(b []byte, index int) (byte, error) {
+	if b == nil || index > len(b) {
+		return 0, ErrNotFound
+	}
+
+	return b[index-1], nil
 }
 
 func (g *GpgData) loadExtendedData() error {
+	if g == nil {
+		err := fmt.Errorf("nil key for loadExtendedData: %w", ErrKeyNotPresent)
+
+		return err
+	}
+
 	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 23.
 	// 4.4.1 DOs for GET DATA.
 	// Application Related Data.
@@ -311,17 +420,30 @@ func (g *GpgData) loadExtendedData() error {
 	// https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.pdf Page 32.
 	// 4.4.3.7 Extended Capabilities.
 	// byte 1
-	capabilitiesByte := getByteWith1BasedIndexing(tag, 1)
+	capabilitiesByte, err := getByteWith1BasedIndexing(tag, 1)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(setSecureMessaging) failed: %w", err)
+	}
 
 	// set capabilities.
 	// byte1 bit8, byte 2
-	err = g.setSecureMessaging(capabilitiesByte, getByteWith1BasedIndexing(tag, 2))
+	mByte, err := getByteWith1BasedIndexing(tag, 2)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(setSecureMessaging) failed: %w", err)
+	}
+
+	err = g.setSecureMessaging(capabilitiesByte, mByte)
 	if err != nil {
 		return fmt.Errorf("loadExtendedData(setSecureMessaging) failed: %w", err)
 	}
 
 	// byte1 bit7,  byte 3-4
-	err = g.setGetChallengeSupported(capabilitiesByte, getBytesWith1BasedIndexing(tag, 3, 4))
+	bs, err := getBytesWith1BasedIndexing(tag, 3, 4)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(setGetChallengeSupported) failed: %w", err)
+	}
+
+	err = g.setGetChallengeSupported(capabilitiesByte, bs)
 	if err != nil {
 		return fmt.Errorf("loadExtendedData(setGetChallengeSupported) failed: %w", err)
 	}
@@ -340,10 +462,19 @@ func (g *GpgData) loadExtendedData() error {
 	g.KDFSupported = isSupported(capabilitiesByte, KDFSupported)
 
 	// byte 5-6
-	g.MaximumCardholderCertificatesLength = binary.BigEndian.Uint16(getBytesWith1BasedIndexing(tag, 5, 6))
+	bs, err = getBytesWith1BasedIndexing(tag, 5, 6)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(MaximumCardholderCertificatesLength) failed: %w", err)
+	}
+
+	g.MaximumCardholderCertificatesLength = binary.BigEndian.Uint16(bs)
 
 	// byte 7-8
-	g.MaximumSpecialDOsLength = binary.BigEndian.Uint16(getBytesWith1BasedIndexing(tag, 7, 8))
+	bs, err = getBytesWith1BasedIndexing(tag, 7, 8)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(MaximumSpecialDOsLength) failed: %w", err)
+	}
+	g.MaximumSpecialDOsLength = binary.BigEndian.Uint16(bs)
 
 	// byte 9
 	// opening Yubico Yubikey NEO CCID
@@ -355,17 +486,33 @@ func (g *GpgData) loadExtendedData() error {
 	// opening Yubico YubiKey OTP+FIDO+CCID
 	// PinBlock2Supported: 0x0: false
 	// MSECommandSupported: 0x0: false
-	g.PinBlock2Supported = isSupported(getByteWith1BasedIndexing(tag, 9), 0x01)
+	b, err := getByteWith1BasedIndexing(tag, 9)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(PinBlock2Supported) failed: %w", err)
+	}
+
+	g.PinBlock2Supported = isSupported(b, 0x01)
 	// fmt.Printf("%s: 0x%x: %t\n", "PinBlock2Supported", getByteWith1BasedIndexing(tag, 9), g.PinBlock2Supported)
 
 	// byte 10
-	g.MSECommandSupported = isSupported(getByteWith1BasedIndexing(tag, 10), 0x01)
+	b, err = getByteWith1BasedIndexing(tag, 10)
+	if err != nil {
+		return fmt.Errorf("loadExtendedData(PinBlock2Supported) failed: %w", err)
+	}
+
+	g.MSECommandSupported = isSupported(b, 0x01)
 	// fmt.Printf("%s: 0x%x: %t\n", "MSECommandSupported", getByteWith1BasedIndexing(tag, 10), g.MSECommandSupported)
 
 	return nil
 }
 
 func (g *GpgData) setSecureMessaging(capabilitiesByte, smByte byte) error {
+	if g == nil {
+		err := fmt.Errorf("nil key for setSecureMessaging: %w", ErrKeyNotPresent)
+
+		return err
+	}
+
 	if capabilitiesByte&SecureMessaging != SecureMessaging {
 		return nil
 	}
@@ -381,6 +528,12 @@ func (g *GpgData) setSecureMessaging(capabilitiesByte, smByte byte) error {
 }
 
 func (g *GpgData) setGetChallengeSupported(capabilitiesByte byte, challenge []byte) error {
+	if g == nil {
+		err := fmt.Errorf("nil key for setGetChallengeSupported: %w", ErrKeyNotPresent)
+
+		return err
+	}
+
 	if capabilitiesByte&GetChallenge != GetChallenge {
 		return nil
 	}
@@ -397,4 +550,41 @@ func (g *GpgData) setGetChallengeSupported(capabilitiesByte byte, challenge []by
 
 func isSupported(capabilitiesByte, flagValue byte) bool {
 	return capabilitiesByte&flagValue == flagValue
+}
+
+const (
+	NameNotSet = "[not set]"
+	suffix     = "<<"
+	suffixLen  = len(suffix)
+)
+
+func ParseCardHolderName(name []byte) string {
+	if len(name) == 0 {
+		return NameNotSet
+	}
+
+	nameString := string(name)
+	nameStringLen := len(nameString)
+
+	if nameStringLen == 0 {
+		return NameNotSet
+	}
+
+	builder := strings.Builder{}
+	// Find the <<, everything after that comes first.
+	i := strings.Index(nameString, "<<")
+	if i >= 0 {
+		builder.WriteString(nameString[i+suffixLen:])
+		if i+suffixLen < nameStringLen {
+			builder.WriteString("\n")
+		}
+	} else {
+		i = len(nameString)
+	}
+
+	builder.WriteString(strings.ReplaceAll(nameString[:i], "<", " "))
+
+	rv := builder.String()
+
+	return rv
 }
