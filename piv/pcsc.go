@@ -113,6 +113,9 @@ func (a *apduErr) Unwrap() error {
 		return ErrNotFound
 	case st == 0x6300:
 		return AuthErr{0}
+	case st == 0x6982:
+		// odd, gpg returns 0x6982 but no retries number.
+		return AuthErr{-1}
 	case st == 0x6983:
 		return AuthErr{0}
 	case st&0xfff0 == 0x63c0:

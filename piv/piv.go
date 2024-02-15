@@ -97,6 +97,15 @@ const (
 	insAttest        = 0xf9
 	insGetSerial     = 0xf8
 	insGetMetadata   = 0xf7
+
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
+	paramAsymmetricCryptoMechanism = 0x80
+	paramAsymmetricParameter       = 0x81
+)
+
+const (
+	modePiv = 0x00
+	modeGPG = 0x01
 )
 
 // YubiKey is an exclusive open connection to a YubiKey smart card. While open,
@@ -116,6 +125,11 @@ type YubiKey struct {
 	// YubiKey's version or PIV version? A NEO reports v1.0.4. Figure this out
 	// before exposing an API.
 	version *version
+}
+
+type GPGYubiKey struct {
+	YubiKey
+	gpgData *GpgData
 }
 
 // Close releases the connection to the smart card.
@@ -138,7 +152,7 @@ func (yk *YubiKey) DisableDebug() {
 	yk.tx.EnableDebug()
 }
 
-// Open connects to a YubiKey smart card.
+// Open connects to a YubiKey PIV smart card.
 func Open(card string) (*YubiKey, error) {
 	var c client
 	return c.Open(card)
@@ -622,9 +636,9 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 	return nil
 }
 
-func ykVersion(tx *scTx) (*version, error) {
+func loadYkVersion(tx *scTx, versionInstruction byte) (*version, error) {
 	cmd := apdu{
-		instruction: insGetVersion,
+		instruction: versionInstruction,
 	}
 	resp, err := tx.Transmit(cmd)
 	if err != nil {
@@ -634,6 +648,10 @@ func ykVersion(tx *scTx) (*version, error) {
 		return nil, fmt.Errorf("expected response to have 3 bytes, got: %d", n)
 	}
 	return &version{resp[0], resp[1], resp[2]}, nil
+}
+
+func ykVersion(tx *scTx) (*version, error) {
+	return loadYkVersion(tx, insGetVersion)
 }
 
 func ykSerial(tx *scTx, v *version) (uint32, error) {

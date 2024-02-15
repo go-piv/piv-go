@@ -15,6 +15,7 @@
 package piv
 
 import (
+	"encoding/hex"
 	"fmt"
 	"syscall"
 	"unsafe"
