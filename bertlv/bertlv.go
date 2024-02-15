@@ -6,6 +6,7 @@ import (
 
 const (
 	// dataLongLen is the value that the data length is set to if data is > 254 bytes.
+	// nolint:unused
 	dataLongLen = 0xFF
 
 	// tagMaskValue is used to mask off the bits that are not part of the tag value.
@@ -148,8 +149,10 @@ func (t *tlv) parseSimple(prefix string) (*TLVData, error) {
 		}
 
 		if dataLen == dataLongLen {
-			highByte := uint16(0)
-			lowByte := uint16(0)
+			var (
+				highByte uint16
+				lowByte  uint16
+			)
 
 			highByte, err = t.getByte()
 			if err != nil {
@@ -224,8 +227,10 @@ func (t *tlv) parseBer(prefix string) (*TLVData, error) {
 			// long length
 			for i := uint16(0); i < dataLenByte&sevenBitMask; i++ {
 				// nolint:gomnd
-				highByte := dataLen << 8
-				lowByte := uint16(0)
+				var (
+					highByte = dataLen << 8
+					lowByte  uint16
+				)
 
 				lowByte, err = t.getByte()
 				if err != nil {
