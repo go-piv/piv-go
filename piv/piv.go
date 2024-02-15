@@ -41,6 +41,9 @@ var (
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 	}
+
+	// DebugOpen can be set if you have an issue during the open calls and want to dump those apdu's.
+	DebugOpen = false
 )
 
 // Cards lists all smart cards available via PC/SC interface. Card names are
@@ -125,6 +128,16 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
+// EnableDebug will cause the contents of every apdu to be dumped to console until DisableDebug is called.
+func (yk *YubiKey) EnableDebug() {
+	yk.tx.EnableDebug()
+}
+
+// DisableDebug will stop dumping the contents of every apdu to console.
+func (yk *YubiKey) DisableDebug() {
+	yk.tx.EnableDebug()
+}
+
 // Open connects to a YubiKey smart card.
 func Open(card string) (*YubiKey, error) {
 	var c client
@@ -164,6 +177,12 @@ func (c *client) Open(card string) (*YubiKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
 	}
+
+	// if DebugOpen was set, set debug on the tx so we can see dumps from here out.
+	if DebugOpen {
+		tx.EnableDebug()
+	}
+
 	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
 		tx.Close()
 		return nil, fmt.Errorf("selecting piv applet: %w", err)

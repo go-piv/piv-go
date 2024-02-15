@@ -159,7 +159,7 @@ func (h *scHandle) Begin() (*scTx, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scTx{h.handle}, nil
+	return &scTx{h.handle, false}, nil
 }
 
 func (t *scTx) Close() error {
@@ -169,12 +169,30 @@ func (t *scTx) Close() error {
 
 type scTx struct {
 	handle syscall.Handle
+	// debug will dump the contents of the sent and received apdu's to stdout.
+	// this is very useful if you are comparing to another tool you know works.
+	debug bool
+}
+
+// EnableDebug will cause the contents of every apdu to be dumped to console until DisableDebug is called.
+func (t *scTx) EnableDebug() {
+	t.debug = true
+}
+
+// DisableDebug will stop dumping the contents of every apdu to console.
+func (t *scTx) DisableDebug() {
+	t.debug = false
 }
 
 func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	var resp [maxBufferSizeExtended]byte
 	reqN := len(req)
 	respN := len(resp)
+
+	if t.debug {
+		fmt.Printf("<-- apdu=%s", hex.Dump(req[:]))
+	}
+
 	r0, _, _ := procSCardTransmit.Call(
 		uintptr(t.handle),
 		uintptr(scardPCIT1),
@@ -193,6 +211,12 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	}
 	sw1 := resp[respN-2]
 	sw2 := resp[respN-1]
+
+	if t.debug {
+		e := &apduErr{sw1, sw2}
+		fmt.Printf("--> sw=0x%02x%02x %d bytes: %s\n reason: %s\n", sw1, sw2, respN, hex.Dump(resp[:respN]), e.Error())
+	}
+
 	if sw1 == 0x90 && sw2 == 0x00 {
 		return false, resp[:respN-2], nil
 	}
