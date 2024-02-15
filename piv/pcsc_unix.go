@@ -35,6 +35,7 @@ import "C"
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"unsafe"
 )
@@ -112,23 +113,41 @@ func (h *scHandle) Close() error {
 
 type scTx struct {
 	h C.SCARDHANDLE
+	// debug will dump the contents of the sent and received apdu's to stdout.
+	// this is very useful if you are comparing to another tool you know works.
+	debug bool
 }
 
 func (h *scHandle) Begin() (*scTx, error) {
 	if err := scCheck(C.SCardBeginTransaction(h.h)); err != nil {
 		return nil, err
 	}
-	return &scTx{h.h}, nil
+	return &scTx{h.h, false}, nil
 }
 
 func (t *scTx) Close() error {
 	return scCheck(C.SCardEndTransaction(t.h, C.SCARD_LEAVE_CARD))
 }
 
+// EnableDebug will cause the contents of every apdu to be dumped to console until DisableDebug is called.
+func (t *scTx) EnableDebug() {
+	t.debug = true
+}
+
+// DisableDebug will stop dumping the contents of every apdu to console.
+func (t *scTx) DisableDebug() {
+	t.debug = false
+}
+
 func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	var resp [C.MAX_BUFFER_SIZE_EXTENDED]byte
 	reqN := C.DWORD(len(req))
 	respN := C.DWORD(len(resp))
+
+	if t.debug {
+		fmt.Printf("<-- apdu=%s", hex.Dump(req[:]))
+	}
+
 	rc := C.SCardTransmit(
 		t.h,
 		C.SCARD_PCI_T1,
@@ -142,6 +161,12 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	}
 	sw1 := resp[respN-2]
 	sw2 := resp[respN-1]
+
+	if t.debug {
+		e := &apduErr{sw1, sw2}
+		fmt.Printf("--> sw=0x%02x%02x %d bytes: %s\n reason: %s\n", sw1, sw2, respN, hex.Dump(resp[:respN]), e.Error())
+	}
+
 	if sw1 == 0x90 && sw2 == 0x00 {
 		return false, resp[:respN-2], nil
 	}
