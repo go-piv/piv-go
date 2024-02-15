@@ -210,7 +210,11 @@ func encodePIN(pin string) ([]byte, error) {
 	if len(data) > 8 {
 		return nil, fmt.Errorf("pin longer than 8 bytes")
 	}
+
 	// apply padding
+	// 2.4 Security Architecture
+	// 2.4.3 Authentication of an Individual
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=88
 	for i := len(data); i < 8; i++ {
 		data = append(data, 0xff)
 	}
@@ -237,7 +241,10 @@ func ykLogin(tx *scTx, pin string) error {
 		return err
 	}
 
+	// 3.2 PIV Card Application Card Commands for Authentication
+	// 3.2.1 VERIFY Card Command
 	// https://csrc.nist.gov/CSRC/media/Publications/sp/800-73/4/archive/2015-05-29/documents/sp800_73-4_pt2_draft.pdf#page=20
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=86
 	cmd := apdu{instruction: insVerify, param2: 0x80, data: data}
 	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("verify pin: %w", err)
