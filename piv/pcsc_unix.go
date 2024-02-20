@@ -42,16 +42,17 @@ import (
 const rcSuccess = C.SCARD_S_SUCCESS
 
 type scContext struct {
-	ctx C.SCARDCONTEXT
+	ctx   C.SCARDCONTEXT
+	trace *ClientTrace
 }
 
-func newSCContext() (*scContext, error) {
+func newSCContext(trace *ClientTrace) (*scContext, error) {
 	var ctx C.SCARDCONTEXT
 	rc := C.SCardEstablishContext(C.SCARD_SCOPE_SYSTEM, nil, nil, &ctx)
 	if err := scCheck(rc); err != nil {
 		return nil, err
 	}
-	return &scContext{ctx: ctx}, nil
+	return &scContext{ctx: ctx, trace: trace}, nil
 }
 
 func (c *scContext) Close() error {
@@ -88,8 +89,14 @@ func (c *scContext) ListReaders() ([]string, error) {
 	return readers, nil
 }
 
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (c *scContext) WithClientTrace(clientTrace *ClientTrace) {
+	c.trace = clientTrace
+}
+
 type scHandle struct {
-	h C.SCARDHANDLE
+	h     C.SCARDHANDLE
+	trace *ClientTrace
 }
 
 func (c *scContext) Connect(reader string) (*scHandle, error) {
@@ -103,7 +110,12 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	if err := scCheck(rc); err != nil {
 		return nil, err
 	}
-	return &scHandle{handle}, nil
+	return &scHandle{h: handle, trace: c.trace}, nil
+}
+
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (h *scHandle) WithClientTrace(clientTrace *ClientTrace) {
+	h.trace = clientTrace
 }
 
 func (h *scHandle) Close() error {
@@ -112,23 +124,35 @@ func (h *scHandle) Close() error {
 
 type scTx struct {
 	h C.SCARDHANDLE
+	// If trace is not nil, then trace.Transmit and trace.TransmitResult will be called.
+	trace *ClientTrace
 }
 
 func (h *scHandle) Begin() (*scTx, error) {
 	if err := scCheck(C.SCardBeginTransaction(h.h)); err != nil {
 		return nil, err
 	}
-	return &scTx{h.h}, nil
+	return &scTx{h.h, nil}, nil
 }
 
 func (t *scTx) Close() error {
 	return scCheck(C.SCardEndTransaction(t.h, C.SCARD_LEAVE_CARD))
 }
 
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (t *scTx) WithClientTrace(clientTrace *ClientTrace) {
+	t.trace = clientTrace
+}
+
 func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	var resp [C.MAX_BUFFER_SIZE_EXTENDED]byte
 	reqN := C.DWORD(len(req))
 	respN := C.DWORD(len(resp))
+
+	if t.trace != nil && t.trace.Transmit != nil {
+		t.trace.Transmit(req[:])
+	}
+
 	rc := C.SCardTransmit(
 		t.h,
 		C.SCARD_PCI_T1,
@@ -142,6 +166,11 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	}
 	sw1 := resp[respN-2]
 	sw2 := resp[respN-1]
+
+	if t.trace != nil && t.trace.TransmitResult != nil {
+		t.trace.TransmitResult(req[:], resp[:respN], int(respN), sw1, sw2)
+	}
+
 	if sw1 == 0x90 && sw2 == 0x00 {
 		return false, resp[:respN-2], nil
 	}

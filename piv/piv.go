@@ -113,6 +113,8 @@ type YubiKey struct {
 	// YubiKey's version or PIV version? A NEO reports v1.0.4. Figure this out
 	// before exposing an API.
 	version *version
+
+	trace *ClientTrace
 }
 
 // Close releases the connection to the smart card.
@@ -125,7 +127,28 @@ func (yk *YubiKey) Close() error {
 	return err1
 }
 
-// Open connects to a YubiKey smart card.
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (yk *YubiKey) WithClientTrace(clientTrace *ClientTrace) {
+	yk.trace = clientTrace
+	yk.ctx.WithClientTrace(clientTrace)
+	yk.h.WithClientTrace(clientTrace)
+	yk.tx.WithClientTrace(clientTrace)
+}
+
+// Client allows a yubikey to be opened with tracing.
+type Client struct {
+	Trace *ClientTrace
+}
+
+func (p *Client) Open(card string) (*YubiKey, error) {
+	c := client{
+		Rand:  nil,
+		trace: p.Trace,
+	}
+
+	return c.Open(card)
+}
+
 func Open(card string) (*YubiKey, error) {
 	var c client
 	return c.Open(card)
@@ -137,11 +160,12 @@ type client struct {
 	// Rand is a cryptographic source of randomness used for card challenges.
 	//
 	// If nil, defaults to crypto.Rand.
-	Rand io.Reader
+	Rand  io.Reader
+	trace *ClientTrace
 }
 
 func (c *client) Cards() ([]string, error) {
-	ctx, err := newSCContext()
+	ctx, err := newSCContext(c.trace)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to pcsc: %w", err)
 	}
@@ -150,7 +174,7 @@ func (c *client) Cards() ([]string, error) {
 }
 
 func (c *client) Open(card string) (*YubiKey, error) {
-	ctx, err := newSCContext()
+	ctx, err := newSCContext(c.trace)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to smart card daemon: %w", err)
 	}
@@ -164,6 +188,7 @@ func (c *client) Open(card string) (*YubiKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
 	}
+
 	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
 		tx.Close()
 		return nil, fmt.Errorf("selecting piv applet: %w", err)

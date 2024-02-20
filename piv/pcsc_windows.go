@@ -54,10 +54,11 @@ func isRCNoReaders(rc uintptr) bool {
 }
 
 type scContext struct {
-	ctx syscall.Handle
+	ctx   syscall.Handle
+	trace *ClientTrace
 }
 
-func newSCContext() (*scContext, error) {
+func newSCContext(trace *ClientTrace) (*scContext, error) {
 	var ctx syscall.Handle
 
 	r0, _, _ := procSCardEstablishContext.Call(
@@ -69,7 +70,7 @@ func newSCContext() (*scContext, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scContext{ctx: ctx}, nil
+	return &scContext{ctx: ctx, trace: trace}, nil
 }
 
 func (c *scContext) Close() error {
@@ -142,11 +143,17 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scHandle{handle}, nil
+	return &scHandle{handle: handle, trace: c.trace}, nil
+}
+
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (c *scContext) WithClientTrace(clientTrace *ClientTrace) {
+	c.trace = clientTrace
 }
 
 type scHandle struct {
 	handle syscall.Handle
+	trace  *ClientTrace
 }
 
 func (h *scHandle) Close() error {
@@ -159,7 +166,7 @@ func (h *scHandle) Begin() (*scTx, error) {
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scTx{h.handle}, nil
+	return &scTx{h.handle, nil}, nil
 }
 
 func (t *scTx) Close() error {
@@ -167,14 +174,31 @@ func (t *scTx) Close() error {
 	return scCheck(r0)
 }
 
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (h *scHandle) WithClientTrace(clientTrace *ClientTrace) {
+	h.trace = clientTrace
+}
+
 type scTx struct {
 	handle syscall.Handle
+	// If trace is not nil, then trace.Transmit and trace.TransmitResult will be called.
+	trace *ClientTrace
+}
+
+// WithClientTrace can be passed an instance of ClientTrace to trace the apdu's sent.
+func (t *scTx) WithClientTrace(clientTrace *ClientTrace) {
+	t.trace = clientTrace
 }
 
 func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	var resp [maxBufferSizeExtended]byte
 	reqN := len(req)
 	respN := len(resp)
+
+	if t.trace != nil && t.trace.Transmit != nil {
+		t.trace.Transmit(req[:])
+	}
+
 	r0, _, _ := procSCardTransmit.Call(
 		uintptr(t.handle),
 		uintptr(scardPCIT1),
@@ -193,6 +217,11 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	}
 	sw1 := resp[respN-2]
 	sw2 := resp[respN-1]
+
+	if t.trace != nil && t.trace.TransmitResult != nil {
+		t.trace.TransmitResult(req[:], resp[:respN], int(respN), sw1, sw2)
+	}
+
 	if sw1 == 0x90 && sw2 == 0x00 {
 		return false, resp[:respN-2], nil
 	}
