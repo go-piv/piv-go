@@ -155,12 +155,17 @@ func (h *scHandle) Close() error {
 	return scCheck(r0)
 }
 
-func (h *scHandle) Begin() (*scTx, error) {
+func (h *scHandle) Begin() (SCTx, error) {
 	r0, _, _ := procSCardBeginTransaction.Call(uintptr(h.handle))
 	if err := scCheck(r0); err != nil {
 		return nil, err
 	}
-	return &scTx{h.handle, false}, nil
+	return &PCSCTx{
+		tx: &scTx{
+			handle: h.handle,
+			debug:  false,
+		},
+	}, nil
 }
 
 func (t *scTx) Close() error {
@@ -183,6 +188,10 @@ func (t *scTx) EnableDebug() {
 // DisableDebug will stop dumping the contents of every apdu to console.
 func (t *scTx) DisableDebug() {
 	t.debug = false
+}
+
+func (t *scTx) IsDebugEnabled() bool {
+	return t.debug
 }
 
 func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {

@@ -118,11 +118,17 @@ type scTx struct {
 	debug bool
 }
 
-func (h *scHandle) Begin() (*scTx, error) {
+// nolint:ireturn
+func (h *scHandle) Begin() (SCTx, error) {
 	if err := scCheck(C.SCardBeginTransaction(h.h)); err != nil {
 		return nil, err
 	}
-	return &scTx{h.h, false}, nil
+	return &PCSCTx{
+		tx: &scTx{
+			h:     h.h,
+			debug: false,
+		},
+	}, nil
 }
 
 func (t *scTx) Close() error {
@@ -164,7 +170,7 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 
 	if t.debug {
 		e := &apduErr{sw1, sw2}
-		fmt.Printf("--> sw=0x%02x%02x %d bytes: %s\n reason: %s\n", sw1, sw2, respN, hex.Dump(resp[:respN]), e.Error())
+		fmt.Printf("--> sw=0x%02x%02x %d bytes:\n%s\n reason: %s\n", sw1, sw2, respN, hex.Dump(resp[:respN]), e.Error())
 	}
 
 	if sw1 == 0x90 && sw2 == 0x00 {

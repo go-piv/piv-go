@@ -15,8 +15,11 @@
 package piv
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
+
+	"github.com/go-piv/piv-go/bertlv"
 )
 
 type scErr struct {
@@ -39,12 +42,16 @@ type AuthErr struct {
 	Retries int
 }
 
-func (v AuthErr) Error() string {
+func retries(n int) string {
 	r := "retries"
-	if v.Retries == 1 {
+	if n == 1 {
 		r = "retry"
 	}
-	return fmt.Sprintf("verification failed (%d %s remaining)", v.Retries, r)
+	return fmt.Sprintf("verification failed (%d %s remaining)", n, r)
+}
+
+func (v AuthErr) Error() string {
+	return retries(v.Retries)
 }
 
 // ErrNotFound is returned when the requested object on the smart card is not found.
@@ -70,21 +77,51 @@ func (a *apduErr) Error() string {
 		msg = u.Error()
 	}
 
+	if a.sw1 == 0x61 {
+		msg = fmt.Sprintf("0x%02x bytes available", a.sw2)
+	}
+
+	if a.sw1 == 0x63 && a.sw2&0xf0 == 0xc0 {
+		msg = retries(int(a.Status() & 0x0f))
+	}
+
 	switch a.Status() {
+	case 0x6581:
+		msg = "decryption failed"
+
+	case 0x6600:
+		msg = "security-related issues (reserved for UIF in this application)"
+
+	case 0x6700:
+		msg = "wrong length (Lc and/or Le)"
+
 	// 0x6300 is "verification failed", represented as AuthErr{0}
 	// 0x63Cn is "verification failed" with retry, represented as AuthErr{n}
+	case 0x6881:
+		msg = "logical channel not supported"
 	case 0x6882:
 		msg = "secure messaging not supported"
+	case 0x6883:
+		msg = "last command of the chain expected"
+	case 0x6884:
+		msg = "command chaining not supported"
+
 	case 0x6982:
+		// Security status not satisfied PW wrong PW not checked (command not allowed) Secure messaging incorrect (checksum and/or cryptogram)
 		msg = "security status not satisfied"
 	case 0x6983:
 		// This will also be AuthErr{0} but we override the message here
 		// so that it's clear that the reason is a block rather than a simple
 		// failed authentication verification.
+		// Authentication method blocked PW blocked (error counter zero)
 		msg = "authentication method blocked"
+	case 0x6985:
+		msg = "Condition of use not satisfied"
 	case 0x6987:
+		// Expected secure messaging DOs missing (e. g. SM-key)
 		msg = "expected secure messaging data objects are missing"
 	case 0x6988:
+		// SM data objects incorrect (e. g. wrong TLV-structure in command data)
 		msg = "secure messaging data objects are incorrect"
 	case 0x6a80:
 		msg = "incorrect parameter in command data field"
@@ -96,7 +133,18 @@ func (a *apduErr) Error() string {
 	case 0x6a86:
 		msg = "incorrect parameter in P1 or P2"
 	case 0x6a88:
+		// Referenced data, reference data or DO not found
 		msg = "referenced data or reference data not found"
+	case 0x6b00:
+		msg = "Wrong parameters P1-P2"
+	case 0x6d00:
+		msg = "Instruction code (INS) not supported or invalid"
+	case 0x6e00:
+		msg = "Class (CLA) not supported"
+	case 0x6f00:
+		msg = "No precise diagnosis"
+	case 0x9000:
+		msg = "Command correct"
 	}
 
 	if msg != "" {
@@ -138,6 +186,10 @@ type apdu struct {
 }
 
 func (t *scTx) Transmit(d apdu) ([]byte, error) {
+	if t.debug {
+		fmt.Printf("Transmit: [%s]\n", bertlv.MakeJSONString(d))
+	}
+
 	data := d.data
 	var resp []byte
 	const maxAPDUDataSize = 0xff
@@ -152,6 +204,10 @@ func (t *scTx) Transmit(d apdu) ([]byte, error) {
 		data = data[maxAPDUDataSize:]
 		_, r, err := t.transmit(req)
 		if err != nil {
+			if t.debug {
+				fmt.Printf("Transmit failed: %v\nreq:\n%s\nresp:\n%s\n", err, hex.Dump(req), hex.Dump(r))
+			}
+
 			return nil, fmt.Errorf("transmitting initial chunk %w", err)
 		}
 		resp = append(resp, r...)
@@ -165,6 +221,10 @@ func (t *scTx) Transmit(d apdu) ([]byte, error) {
 	copy(req[5:], data)
 	hasMore, r, err := t.transmit(req)
 	if err != nil {
+		if t.debug {
+			fmt.Printf("Transmit failed: %v hasmore: %t\nreq:\n%s\nresp:\n%s\n", err, hasMore, hex.Dump(req), hex.Dump(r))
+		}
+
 		return nil, err
 	}
 	resp = append(resp, r...)
@@ -175,9 +235,17 @@ func (t *scTx) Transmit(d apdu) ([]byte, error) {
 		var r []byte
 		hasMore, r, err = t.transmit(req)
 		if err != nil {
+			if t.debug {
+				fmt.Printf("Transmit failed: %v hasmore: %t\nreq:\n%s\nresp:\n%s\n", err, hasMore, hex.Dump(req), hex.Dump(r))
+			}
+
 			return nil, fmt.Errorf("reading further response: %w", err)
 		}
 		resp = append(resp, r...)
+	}
+
+	if t.debug {
+		fmt.Printf("Response:\n%s\n", hex.Dump(resp[:]))
 	}
 
 	return resp, nil
