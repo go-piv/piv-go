@@ -21,7 +21,7 @@ import (
 )
 
 func runContextTest(t *testing.T, f func(t *testing.T, c *scContext)) {
-	ctx, err := newSCContext()
+	ctx, err := newSCContext(nil)
 	if err != nil {
 		t.Fatalf("creating context: %v", err)
 	}
