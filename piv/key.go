@@ -39,10 +39,10 @@ import (
 // is given keys using different algorithms.
 var errMismatchingAlgorithms = errors.New("mismatching key algorithms")
 
-// errUnsupportedKeySize is returned when a key has an unsupported size
+// errUnsupportedKeySize is returned when a key has an unsupported size.
 var errUnsupportedKeySize = errors.New("unsupported key size")
 
-// unsupportedCurveError is used when a key has an unsupported curve
+// unsupportedCurveError is used when a key has an unsupported curve.
 type unsupportedCurveError struct {
 	curve int
 }
@@ -427,7 +427,7 @@ func RetiredKeyManagementSlot(key uint32) (Slot, bool) {
 	return slot, ok
 }
 
-// String returns the two-character hex representation of the slot
+// String returns the two-character hex representation of the slot.
 func (s Slot) String() string {
 	return strconv.FormatUint(uint64(s.Key), 16)
 }
@@ -571,7 +571,7 @@ func (yk *YubiKey) Attest(slot Slot) (*x509.Certificate, error) {
 	return nil, err
 }
 
-func ykAttest(tx *scTx, slot Slot) (*x509.Certificate, error) {
+func ykAttest(tx SCTx, slot Slot) (*x509.Certificate, error) {
 	cmd := apdu{
 		instruction: insAttest,
 		param1:      byte(slot.Key),
@@ -680,7 +680,7 @@ func (yk *YubiKey) KeyInfo(slot Slot) (KeyInfo, error) {
 	return ki, nil
 }
 
-// Certificate returns the certifiate object stored in a given slot.
+// Certificate returns the certificate object stored in a given slot.
 //
 // If a certificate hasn't been set in the provided slot, the returned error
 // wraps ErrNotFound.
@@ -750,7 +750,7 @@ func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificat
 	return ykStoreCertificate(yk.tx, slot, cert)
 }
 
-func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {
+func ykStoreCertificate(tx SCTx, slot Slot, cert *x509.Certificate) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=40
 	data := marshalASN1(0x70, cert.Raw)
 	// "for a certificate encoded in uncompressed form CertInfo shall be 0x00"
@@ -804,7 +804,7 @@ func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.Public
 	return ykGenerateKey(yk.tx, slot, opts)
 }
 
-func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
+func ykGenerateKey(tx SCTx, slot Slot, o Key) (crypto.PublicKey, error) {
 	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
 		return nil, fmt.Errorf("unsupported algorithm")
@@ -918,7 +918,7 @@ func (k KeyAuth) authTx(yk *YubiKey, pp PINPolicy) error {
 	return ykLogin(yk.tx, pin)
 }
 
-func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error)) ([]byte, error) {
+func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx SCTx) ([]byte, error)) ([]byte, error) {
 	if err := k.authTx(yk, pp); err != nil {
 		return nil, err
 	}
@@ -1080,7 +1080,7 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto
 	return ykImportKey(yk.tx, tags, slot, policy)
 }
 
-func ykImportKey(tx *scTx, tags []byte, slot Slot, o Key) error {
+func ykImportKey(tx SCTx, tags []byte, slot Slot, o Key) error {
 	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
 		return fmt.Errorf("unsupported algorithm")
@@ -1136,7 +1136,7 @@ var _ crypto.Signer = (*ECDSAPrivateKey)(nil)
 
 // Sign implements crypto.Signer.
 func (k *ECDSAPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx SCTx) ([]byte, error) {
 		return ykSignECDSA(tx, k.slot, k.pub, digest)
 	})
 }
@@ -1155,7 +1155,7 @@ func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
 		return nil, errMismatchingAlgorithms
 	}
 	msg := elliptic.Marshal(peer.Curve, peer.X, peer.Y)
-	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx SCTx) ([]byte, error) {
 		var alg byte
 		size := k.pub.Params().BitSize
 		switch size {
@@ -1206,7 +1206,7 @@ func (k *keyEd25519) Public() crypto.PublicKey {
 }
 
 func (k *keyEd25519) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx SCTx) ([]byte, error) {
 		return skSignEd25519(tx, k.slot, k.pub, digest)
 	})
 }
@@ -1224,18 +1224,18 @@ func (k *keyRSA) Public() crypto.PublicKey {
 }
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx SCTx) ([]byte, error) {
 		return ykSignRSA(tx, rand, k.slot, k.pub, digest, opts)
 	})
 }
 
 func (k *keyRSA) Decrypt(rand io.Reader, msg []byte, opts crypto.DecrypterOpts) ([]byte, error) {
-	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx SCTx) ([]byte, error) {
 		return ykDecryptRSA(tx, k.slot, k.pub, msg)
 	})
 }
 
-func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]byte, error) {
+func ykSignECDSA(tx SCTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]byte, error) {
 	var alg byte
 	size := pub.Params().BitSize
 	switch size {
@@ -1280,7 +1280,7 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 
 // This function only works on SoloKeys prototypes and other PIV devices that choose
 // to implement Ed25519 signatures under alg 0x22.
-func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
+func skSignEd25519(tx SCTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
 	// Adaptation of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
 	cmd := apdu{
@@ -1387,7 +1387,7 @@ func rsaAlg(pub *rsa.PublicKey) (byte, error) {
 	}
 }
 
-func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte, error) {
+func ykDecryptRSA(tx SCTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte, error) {
 	alg, err := rsaAlg(pub)
 	if err != nil {
 		return nil, err
@@ -1426,10 +1426,14 @@ func ykDecryptRSA(tx *scTx, slot Slot, pub *rsa.PublicKey, data []byte) ([]byte,
 // PKCS#1 v15 is largely informed by the standard library
 // https://github.com/golang/go/blob/go1.13.5/src/crypto/rsa/pkcs1v15.go
 
-func ykSignRSA(tx *scTx, rand io.Reader, slot Slot, pub *rsa.PublicKey, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+func ykSignRSA(tx SCTx, rand io.Reader, slot Slot, pub *rsa.PublicKey, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	hash := opts.HashFunc()
 	if hash.Size() != len(digest) {
 		return nil, fmt.Errorf("input must be a hashed message")
+	}
+
+	if _, ok := opts.(*rsa.PSSOptions); ok {
+		return nil, fmt.Errorf("rsassa-pss signatures not supported")
 	}
 
 	alg, err := rsaAlg(pub)

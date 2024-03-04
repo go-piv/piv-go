@@ -41,6 +41,9 @@ var (
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 	}
+
+	// DebugOpen can be set if you have an issue during the open calls and want to dump those apdu's.
+	DebugOpen = false
 )
 
 // Cards lists all smart cards available via PC/SC interface. Card names are
@@ -64,7 +67,7 @@ const (
 	algECCP256 = 0x11
 	algECCP384 = 0x14
 	// non-standard; as implemented by SoloKeys. Chosen for low probability of eventual
-	// clashes, if and when PIV standard adds Ed25519 support
+	// clashes, if and when PIV standard adds Ed25519 support.
 	algEd25519 = 0x22
 
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-78-4.pdf#page=16
@@ -94,6 +97,15 @@ const (
 	insAttest        = 0xf9
 	insGetSerial     = 0xf8
 	insGetMetadata   = 0xf7
+
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
+	paramAsymmetricCryptoMechanism = 0x80
+	paramAsymmetricParameter       = 0x81
+)
+
+const (
+	modePiv = 0x00
+	modeGPG = 0x01
 )
 
 // YubiKey is an exclusive open connection to a YubiKey smart card. While open,
@@ -101,9 +113,9 @@ const (
 //
 // To release the connection, call the Close method.
 type YubiKey struct {
-	ctx *scContext
-	h   *scHandle
-	tx  *scTx
+	ctx *PCSCContext
+	h   *PCSCHandle
+	tx  *PCSCTx
 
 	rand io.Reader
 
@@ -115,17 +127,51 @@ type YubiKey struct {
 	version *version
 }
 
-// Close releases the connection to the smart card.
-func (yk *YubiKey) Close() error {
-	err1 := yk.h.Close()
-	err2 := yk.ctx.Close()
+type GPGYubiKey struct {
+	ctx     SCContext
+	h       SCHandle
+	tx      SCTx
+	gpgData *GpgData
+	trace   bool
+}
+
+func closeHandles(ctx SCContext, h SCHandle) error {
+	var err1, err2 error
+
+	if h == nil {
+		return ErrKeyNotPresent
+	}
+
+	err1 = h.Close()
+	if ctx != nil {
+		err2 = ctx.Close()
+	} else {
+		err2 = ErrKeyNotPresent
+	}
+
 	if err1 == nil {
 		return err2
 	}
+
 	return err1
 }
 
-// Open connects to a YubiKey smart card.
+// Close releases the connection to the smart card.
+func (yk *YubiKey) Close() error {
+	return closeHandles(yk.ctx, yk.h)
+}
+
+// EnableDebug will cause the contents of every apdu to be dumped to console until DisableDebug is called.
+func (yk *YubiKey) EnableDebug() {
+	yk.tx.EnableDebug()
+}
+
+// DisableDebug will stop dumping the contents of every apdu to console.
+func (yk *YubiKey) DisableDebug() {
+	yk.tx.EnableDebug()
+}
+
+// Open connects to a YubiKey PIV smart card.
 func Open(card string) (*YubiKey, error) {
 	var c client
 	return c.Open(card)
@@ -164,12 +210,26 @@ func (c *client) Open(card string) (*YubiKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("beginning smart card transaction: %w", err)
 	}
+
+	// if DebugOpen was set, set debug on the tx so we can see dumps from here out.
+	if DebugOpen {
+		tx.EnableDebug()
+	}
+
 	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
 		tx.Close()
 		return nil, fmt.Errorf("selecting piv applet: %w", err)
 	}
 
-	yk := &YubiKey{ctx: ctx, h: h, tx: tx}
+	yk := &YubiKey{
+		ctx: &PCSCContext{
+			ctx: ctx,
+		},
+		h: &PCSCHandle{
+			h: h,
+		},
+		tx: tx.(*PCSCTx),
+	}
 	v, err := ykVersion(yk.tx)
 	if err != nil {
 		yk.Close()
@@ -226,7 +286,7 @@ func encodePIN(pin string) ([]byte, error) {
 // PIN authentication for other operations are handled separately, and VerifyPIN
 // does not need to be called before those methods.
 //
-// After a specific number of authentication attemps with an invalid PIN,
+// After a specific number of authentication attempts with an invalid PIN,
 // usually 3, the PIN will become block and refuse further attempts. At that
 // point the PUK must be used to unblock the PIN.
 //
@@ -235,7 +295,7 @@ func (yk *YubiKey) VerifyPIN(pin string) error {
 	return ykLogin(yk.tx, pin)
 }
 
-func ykLogin(tx *scTx, pin string) error {
+func ykLogin(tx SCTx, pin string) error {
 	data, err := encodePIN(pin)
 	if err != nil {
 		return err
@@ -252,7 +312,7 @@ func ykLogin(tx *scTx, pin string) error {
 	return nil
 }
 
-func ykLoginNeeded(tx *scTx) bool {
+func ykLoginNeeded(tx SCTx) bool {
 	cmd := apdu{instruction: insVerify, param2: 0x80}
 	_, err := tx.Transmit(cmd)
 	return err != nil
@@ -263,7 +323,7 @@ func (yk *YubiKey) Retries() (int, error) {
 	return ykPINRetries(yk.tx)
 }
 
-func ykPINRetries(tx *scTx) (int, error) {
+func ykPINRetries(tx SCTx) (int, error) {
 	cmd := apdu{instruction: insVerify, param2: 0x80}
 	_, err := tx.Transmit(cmd)
 	if err == nil {
@@ -283,7 +343,7 @@ func (yk *YubiKey) Reset() error {
 	return ykReset(yk.tx, yk.rand)
 }
 
-func ykReset(tx *scTx, r io.Reader) error {
+func ykReset(tx SCTx, r io.Reader) error {
 	// Reset only works if both the PIN and PUK are blocked. Before resetting,
 	// try the wrong PIN and PUK multiple times to block them.
 
@@ -364,7 +424,7 @@ var (
 	aidYubiKey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
 )
 
-func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
+func ykAuthenticate(tx SCTx, key [24]byte, rand io.Reader) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=92
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
 
@@ -476,7 +536,7 @@ func (yk *YubiKey) SetManagementKey(oldKey, newKey [24]byte) error {
 
 // ykSetManagementKey updates the management key to a new key. This requires
 // authenticating with the existing management key.
-func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
+func ykSetManagementKey(tx SCTx, key [24]byte, touch bool) error {
 	cmd := apdu{
 		instruction: insSetMGMKey,
 		param1:      0xff,
@@ -513,7 +573,7 @@ func (yk *YubiKey) SetPIN(oldPIN, newPIN string) error {
 	return ykChangePIN(yk.tx, oldPIN, newPIN)
 }
 
-func ykChangePIN(tx *scTx, oldPIN, newPIN string) error {
+func ykChangePIN(tx SCTx, oldPIN, newPIN string) error {
 	oldPINData, err := encodePIN(oldPIN)
 	if err != nil {
 		return fmt.Errorf("encoding old pin: %v", err)
@@ -536,7 +596,7 @@ func (yk *YubiKey) Unblock(puk, newPIN string) error {
 	return ykUnblockPIN(yk.tx, puk, newPIN)
 }
 
-func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
+func ykUnblockPIN(tx SCTx, puk, newPIN string) error {
 	pukData, err := encodePIN(puk)
 	if err != nil {
 		return fmt.Errorf("encoding puk: %v", err)
@@ -559,7 +619,7 @@ func ykUnblockPIN(tx *scTx, puk, newPIN string) error {
 //
 // To generate a new PUK, use the crypto/rand package.
 //
-//	// Generate a 8 character PUK.
+//	// Generate an 8 character PUK.
 //	newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
 //	if err != nil {
 //		// ...
@@ -573,7 +633,7 @@ func (yk *YubiKey) SetPUK(oldPUK, newPUK string) error {
 	return ykChangePUK(yk.tx, oldPUK, newPUK)
 }
 
-func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
+func ykChangePUK(tx SCTx, oldPUK, newPUK string) error {
 	oldPUKData, err := encodePIN(oldPUK)
 	if err != nil {
 		return fmt.Errorf("encoding old puk: %v", err)
@@ -591,7 +651,7 @@ func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
 	return err
 }
 
-func ykSelectApplication(tx *scTx, id []byte) error {
+func ykSelectApplication(tx SCTx, id []byte) error {
 	cmd := apdu{
 		instruction: insSelectApplication,
 		param1:      0x04,
@@ -603,9 +663,9 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 	return nil
 }
 
-func ykVersion(tx *scTx) (*version, error) {
+func loadYkVersion(tx SCTx, versionInstruction byte) (*version, error) {
 	cmd := apdu{
-		instruction: insGetVersion,
+		instruction: versionInstruction,
 	}
 	resp, err := tx.Transmit(cmd)
 	if err != nil {
@@ -617,7 +677,11 @@ func ykVersion(tx *scTx) (*version, error) {
 	return &version{resp[0], resp[1], resp[2]}, nil
 }
 
-func ykSerial(tx *scTx, v *version) (uint32, error) {
+func ykVersion(tx SCTx) (*version, error) {
+	return loadYkVersion(tx, insGetVersion)
+}
+
+func ykSerial(tx SCTx, v *version) (uint32, error) {
 	cmd := apdu{instruction: insGetSerial}
 	if v.major < 5 {
 		// Earlier versions of YubiKeys required using the yubikey applet to get
@@ -638,6 +702,47 @@ func ykSerial(tx *scTx, v *version) (uint32, error) {
 	return binary.BigEndian.Uint32(resp), nil
 }
 
+// ykChangeManagementKey sets the Management Key to the new key provided. The
+// user must have authenticated with the existing key first.
+func ykChangeManagementKey(tx SCTx, key [24]byte) error {
+	cmd := apdu{
+		instruction: insSetMGMKey,
+		param1:      0xff,
+		param2:      0xff, // TODO: support touch policy
+		data: append([]byte{
+			alg3DES, keyCardManagement, 24,
+		}, key[:]...),
+	}
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+	return nil
+}
+
+func unmarshalDERField(b []byte, tag uint64) (obj []byte, err error) {
+	var prefix []byte
+	for tag > 0 {
+		prefix = append(prefix, byte(tag))
+		tag = tag >> 8
+	}
+	for i, j := 0, len(prefix)-1; i < j; i, j = i+1, j-1 {
+		prefix[i], prefix[j] = prefix[j], prefix[i]
+	}
+
+	hasPrefix := bytes.HasPrefix(b, prefix)
+	for len(b) > 0 {
+		var v asn1.RawValue
+		b, err = asn1.Unmarshal(b, &v)
+		if err != nil {
+			return nil, err
+		}
+		if hasPrefix {
+			return v.Bytes, nil
+		}
+	}
+	return nil, fmt.Errorf("no der value with tag 0x%x", prefix)
+}
+
 // Metadata returns protected data stored on the card. This can be used to
 // retrieve PIN protected management keys.
 func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
@@ -653,7 +758,7 @@ func (yk *YubiKey) Metadata(pin string) (*Metadata, error) {
 
 // SetMetadata sets PIN protected metadata on the key. This is primarily to
 // store the management key on the smart card instead of managing the PIN and
-// management key seperately.
+// management key separately.
 func (yk *YubiKey) SetMetadata(key [24]byte, m *Metadata) error {
 	return ykSetProtectedMetadata(yk.tx, key, m)
 }
@@ -745,13 +850,14 @@ func (m *Metadata) unmarshal(b []byte) error {
 			return fmt.Errorf("invalid management key length: %d", len(v.Bytes))
 		}
 		var key [24]byte
+
 		copy(key[:], v.Bytes)
 		m.ManagementKey = &key
 	}
 	return nil
 }
 
-func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
+func ykGetProtectedMetadata(tx SCTx, pin string) (*Metadata, error) {
 	// NOTE: for some reason this action requires the PIN to be authenticated on
 	// the same transaction. It doesn't work otherwise.
 	if err := ykLogin(tx, pin); err != nil {
@@ -784,7 +890,7 @@ func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
 	return &m, nil
 }
 
-func ykSetProtectedMetadata(tx *scTx, key [24]byte, m *Metadata) error {
+func ykSetProtectedMetadata(tx SCTx, key [24]byte, m *Metadata) error {
 	data, err := m.marshal()
 	if err != nil {
 		return fmt.Errorf("encoding metadata: %v", err)
