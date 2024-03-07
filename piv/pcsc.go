@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/go-piv/piv-go/bertlv"
+	"github.com/areese/piv-go/bertlv"
 )
 
 type scErr struct {
@@ -172,7 +172,7 @@ func (a *apduErr) Unwrap() error {
 		// Older YubiKeys sometimes return sw1=0x63 and sw2=0x0N to indicate the
 		// number of retries. This isn't spec compliant, but support it anyway.
 		//
-		// https://github.com/go-piv/piv-go/issues/60
+		// https://github.com/areese/piv-go/issues/60
 		return AuthErr{int(st & 0xf)}
 	}
 	return nil

@@ -1,3 +1,3 @@
-module github.com/go-piv/piv-go
+module github.com/areese/piv-go
 
-go 1.18
+go 1.22.1

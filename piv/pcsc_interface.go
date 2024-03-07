@@ -1,6 +1,6 @@
 package piv
 
-import "github.com/go-piv/piv-go/bertlv"
+import "github.com/areese/piv-go/bertlv"
 
 // The interfaces here are for wrapping the pcsc code.
 // This allows us to better test the parts of piv by returning various errors from the pcsc stack.

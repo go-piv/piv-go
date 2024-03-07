@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-piv/piv-go/bertlv"
+	"github.com/areese/piv-go/bertlv"
 )
 
 // References:

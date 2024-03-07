@@ -25,7 +25,7 @@ func scCheck(rc C.int) error {
 		// On MacOS, int isn't big enough to handle the return codes so the
 		// leading bit becomes a two's complement bit. If the return code is
 		// negative, correct this.
-		// https://github.com/go-piv/piv-go/issues/53
+		// https://github.com/areese/piv-go/issues/53
 		i += (1 << 32)
 	}
 	return &scErr{i}

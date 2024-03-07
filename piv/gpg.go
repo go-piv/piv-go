@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/go-piv/piv-go/bertlv"
+	"github.com/areese/piv-go/bertlv"
 )
 
 // nolint:gochecknoglobals

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/go-piv/piv-go/bertlv"
+	"github.com/areese/piv-go/bertlv"
 )
 
 type gpgDataTestCases struct {
