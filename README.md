@@ -1,6 +1,13 @@
-This is not an officially supported Google product
+This is a fork of https://github.com/go-piv/piv-go. 
+This fork adds support for using PIV cards for gpg.
 
-# A Go YubiKey PIV implementation
+If you just want piv-go support, you are better off with the upstream piv-go library.
+
+Before using pgp you should read  [modern-alternatives-to-pgp](https://blog.gtank.cc/modern-alternatives-to-pgp/), as pgp is complicated to setup.
+
+This repo does not yet include the instructions for getting the gpg keys onto the card.
+
+# A Go YubiKey PIV implementation with GPG support.
 
 [![GoDoc](https://godoc.org/github.com/go-piv/piv-go/piv?status.svg)](https://godoc.org/github.com/go-piv/piv-go/piv)
 
