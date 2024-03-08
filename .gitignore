@@ -1,0 +1,9 @@
+.idea/
+.DS_Store
+cover.out
+test-results.out
+.out/
+docs/*copy*.pdf
+/*.patch
+test-results.out
+pcsd.running

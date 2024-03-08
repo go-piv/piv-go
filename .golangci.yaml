@@ -1,0 +1,144 @@
+# golangci-lint settings.  Non-exhaustive.
+# See: https://golangci-lint.run/usage/configuration/ for exhaustive example
+
+# This file contains all available configuration options
+# with their default values.
+
+# options for analysis running
+run:
+  go: '1.20'
+  # default concurrency is a available CPU number
+  concurrency: 20
+
+  # timeout for analysis, e.g. 30s, 5m, default is 1m
+  timeout: 5m
+
+  skip-dirs:
+    - config-test
+
+  # default is true. Enables skipping of directories:
+  #   vendor$, third_party$, testdata$, examples$, Godeps$, builtin$
+  skip-dirs-use-default: true
+
+  # exit code when at least one issue was found, default is 1
+  issues-exit-code: 1
+
+  # include test files or not, default is true
+  tests: true
+
+  # these fail.
+  skip-files:
+    -  piv/pcsc_windows.go
+    -  piv/pcsc_darwin.go
+    -  piv/pcsc_errors.go
+    -  piv/pcsc_test.go
+    -  piv/pcsc_linux.go
+    -  piv/pcsc_openbsd.go
+    -  piv/pcsc_interface_helpers.go
+    -  piv/pcsc_interface.go
+    -  piv/pcsc_freebsd.go
+    -  piv/pcsc_unix.go
+
+
+linters:
+  enable-all: true
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  disable:
+    - depguard
+    - inamedparam
+    - musttag
+    - revive
+    - execinquery
+    - exhaustivestruct
+    - godox
+    - golint
+    - gomoddirectives # this module fails
+    - ifshort
+    - ireturn
+    - lll
+    - nilnil
+    - nolintlint
+    - revive
+    - tagliatelle
+    - wastedassign
+    - wrapcheck
+    - varcheck
+    - varnamelen
+
+issues:
+  # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-rules:
+    - path: bertlv/*_test.go
+      linters:
+        - lll
+        - musttag
+        - nolintlint
+        - testpackage
+        - varnamelen
+
+    # Exclude some linters from running on tests files.
+    - path: bertlv/*.go
+      linters:
+        - musttag
+        - nolintlint
+
+    # Exclude some linters from running on tests files.
+    - path: gpg-test-tool/
+      linters:
+        - deadcode
+        - lll
+        - musttag
+        - nolintlint
+        - unused
+        - wrapcheck
+        - forbidigo
+
+    - path: version/
+      linters:
+        - nolintlint
+
+    - path: piv/
+      linters:
+        - cyclop
+        - deadcode
+        - errcheck
+        - errname
+        - errorlint
+        - exhaustivestruct
+        - exhaustruct
+        - forbidigo
+        - forcetypeassert
+        - funlen
+        - gochecknoinits
+        - gocognit
+        - gocritic
+        - godox
+        - goerr113
+        - gofmt
+        - gofumpt
+        - gomnd
+        - gochecknoglobals
+        - gosec
+        - ifshort
+        - interfacer
+        - lll
+        - musttag
+        - nestif
+        - nlreturn
+        - nolintlint
+        - nonamedreturns
+        - predeclared
+        - paralleltest
+        - scopelint
+        - testpackage
+        - thelper
+        - unconvert
+        - unparam
+        - unused
+        - unparam
+        - whitespace
+        - wrapcheck
+        - wsl
+        - varcheck
+        - varnamelen
