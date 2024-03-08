@@ -7,3 +7,5 @@ docs/*copy*.pdf
 /*.patch
 test-results.out
 pcsd.running
+# ignore vendor.
+/vendor
