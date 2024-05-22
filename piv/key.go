@@ -936,6 +936,11 @@ func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
 	cert, err := yk.Attest(slot)
 	if err != nil {
 		var e *apduErr
+		errors.As(err, &e)
+		if e == nil {
+			// Yubikey Version 5.2.7 Attest returns ErrNotFound
+			return PINPolicyAlways, nil
+		}
 		if errors.As(err, &e) && e.sw1 == 0x6d && e.sw2 == 0x00 {
 			// Attestation cert command not supported, probably an older YubiKey.
 			// Guess PINPolicyAlways.
