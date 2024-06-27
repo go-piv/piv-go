@@ -16,6 +16,8 @@ package piv
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/des"
 	"crypto/rand"
 	"encoding/asn1"
@@ -24,23 +26,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-)
-
-var (
-	// DefaultPIN for the PIV applet. The PIN is used to change the Management Key,
-	// and slots can optionally require it to perform signing operations.
-	DefaultPIN = "123456"
-	// DefaultPUK for the PIV applet. The PUK is only used to reset the PIN when
-	// the card's PIN retries have been exhausted.
-	DefaultPUK = "12345678"
-	// DefaultManagementKey for the PIV applet. The Management Key is a Triple-DES
-	// key required for slot actions such as generating keys, setting certificates,
-	// and signing.
-	DefaultManagementKey = [24]byte{
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-	}
 )
 
 // Cards lists all smart cards available via PC/SC interface. Card names are
@@ -59,6 +44,7 @@ const (
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-78-4.pdf#page=17
 	algTag     = 0x80
 	alg3DES    = 0x03
+	algAES192  = 0x0a
 	algRSA1024 = 0x06
 	algRSA2048 = 0x07
 	algECCP256 = 0x11
@@ -94,6 +80,24 @@ const (
 	insAttest        = 0xf9
 	insGetSerial     = 0xf8
 	insGetMetadata   = 0xf7
+)
+
+var (
+	// DefaultPIN for the PIV applet. The PIN is used to change the Management Key,
+	// and slots can optionally require it to perform signing operations.
+	DefaultPIN = "123456"
+	// DefaultPUK for the PIV applet. The PUK is only used to reset the PIN when
+	// the card's PIN retries have been exhausted.
+	DefaultPUK = "12345678"
+	// DefaultManagementKey for the PIV applet. The Management Key is a Triple-DES
+	// key required for slot actions such as generating keys, setting certificates,
+	// and signing.
+	DefaultManagementKey = [24]byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+	}
+	DefaultManagementKeyType byte = alg3DES
 )
 
 // YubiKey is an exclusive open connection to a YubiKey smart card. While open,
@@ -176,6 +180,12 @@ func (c *client) Open(card string) (*YubiKey, error) {
 		return nil, fmt.Errorf("getting yubikey version: %w", err)
 	}
 	yk.version = v
+
+	// If yubikey is 5.7.0 or newer, management key default is AES192
+	if int(v.major) >= 5 && int(v.minor) >= 7 {
+		DefaultManagementKeyType = algAES192
+	}
+
 	if c.Rand != nil {
 		yk.rand = c.Rand
 	} else {
@@ -368,10 +378,18 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=92
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
 
+	var challengeLength byte
+	switch DefaultManagementKeyType {
+	case algAES192:
+		challengeLength = 16
+	default:
+		challengeLength = 8
+	}
+
 	// request a witness
 	cmd := apdu{
 		instruction: insAuthenticate,
-		param1:      alg3DES,
+		param1:      DefaultManagementKeyType,
 		param2:      keyCardManagement,
 		data: []byte{
 			0x7c, // Dynamic Authentication Template tag
@@ -389,45 +407,55 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 	}
 	if !bytes.Equal(resp[:4], []byte{
 		0x7c,
-		0x0a,
-		0x80, // 'Witness'
-		0x08, // Tag length
+		challengeLength + 2,
+		0x80,            // 'Witness'
+		challengeLength, // Tag length
 	}) {
 		return fmt.Errorf("invalid authentication object header: %x", resp[:4])
 	}
 
-	cardChallenge := resp[4 : 4+8]
-	cardResponse := make([]byte, 8)
-
-	block, err := des.NewTripleDESCipher(key[:])
-	if err != nil {
-		return fmt.Errorf("creating triple des block cipher: %v", err)
+	var block cipher.Block
+	switch DefaultManagementKeyType {
+	case algAES192:
+		block, err = aes.NewCipher(key[:])
+		if err != nil {
+			return fmt.Errorf("creating aes block cipher: %v", err)
+		}
+	default:
+		block, err = des.NewTripleDESCipher(key[:])
+		if err != nil {
+			return fmt.Errorf("creating des block cipher: %v", err)
+		}
 	}
+
+	cardChallenge := resp[4 : 4+challengeLength]
+	cardResponse := make([]byte, challengeLength)
+
 	block.Decrypt(cardResponse, cardChallenge)
 
-	challenge := make([]byte, 8)
+	challenge := make([]byte, challengeLength)
 	if _, err := io.ReadFull(rand, challenge); err != nil {
 		return fmt.Errorf("reading rand data: %v", err)
 	}
-	response := make([]byte, 8)
+	response := make([]byte, challengeLength)
 	block.Encrypt(response, challenge)
 
 	data := []byte{
 		0x7c, // Dynamic Authentication Template tag
-		20,   // 2+8+2+8
-		0x80, // 'Witness'
-		0x08, // Tag length
+		(challengeLength + 2) * 2,
+		0x80,            // 'Witness'
+		challengeLength, // Tag length
 	}
 	data = append(data, cardResponse...)
 	data = append(data,
-		0x81, // 'Challenge'
-		0x08, // Tag length
+		0x81,            // 'Challenge'
+		challengeLength, // Tag length
 	)
 	data = append(data, challenge...)
 
 	cmd = apdu{
 		instruction: insAuthenticate,
-		param1:      alg3DES,
+		param1:      DefaultManagementKeyType,
 		param2:      keyCardManagement,
 		data:        data,
 	}
@@ -440,13 +468,13 @@ func ykAuthenticate(tx *scTx, key [24]byte, rand io.Reader) error {
 	}
 	if !bytes.Equal(resp[:4], []byte{
 		0x7c,
-		0x0a,
+		challengeLength + 2,
 		0x82, // 'Response'
-		0x08,
+		challengeLength,
 	}) {
 		return fmt.Errorf("response invalid authentication object header: %x", resp[:4])
 	}
-	if !bytes.Equal(resp[4:4+8], response) {
+	if !bytes.Equal(resp[4:4+challengeLength], response) {
 		return fmt.Errorf("challenge failed")
 	}
 
@@ -482,7 +510,7 @@ func ykSetManagementKey(tx *scTx, key [24]byte, touch bool) error {
 		param1:      0xff,
 		param2:      0xff,
 		data: append([]byte{
-			alg3DES, keyCardManagement, 24,
+			DefaultManagementKeyType, keyCardManagement, 24,
 		}, key[:]...),
 	}
 	if touch {
