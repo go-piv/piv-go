@@ -202,7 +202,7 @@ func TestPINPrompt(t *testing.T) {
 }
 
 func supportsAttestation(yk *YubiKey) bool {
-	return supportsVersion(yk.Version(), 4, 3, 0)
+	return supportsVersion(yk.version, 4, 3, 0)
 }
 
 func TestSlots(t *testing.T) {
