@@ -281,6 +281,18 @@ func TestYubiKeyChangePUK(t *testing.T) {
 	}
 }
 
+func TestYubiKeyChangeRetries(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	if err := yk.SetRetries(DefaultManagementKey, DefaultPIN, 0, 0); err == nil {
+		t.Errorf("successfully set retries to zeros, expected error")
+	}
+	if err := yk.SetRetries(DefaultManagementKey, DefaultPIN, 5, 4); err != nil {
+		t.Fatalf("setting pin/puk retries: %v", err)
+	}
+}
+
 func TestChangeManagementKey(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
