@@ -654,17 +654,17 @@ func ykChangePUK(tx *scTx, oldPUK, newPUK string) error {
 }
 
 func (yk *YubiKey) SetRetries(managementKey []byte, pin string, pinRetries byte, pukRetries byte) error {
-	return ykSetPinPukRetries(yk.tx, managementKey, pin, pinRetries, pukRetries, yk.rand)
+	return ykSetPinPukRetries(yk.tx, managementKey, pin, pinRetries, pukRetries, yk.rand, yk.version)
 }
 
-func ykSetPinPukRetries(tx *scTx, managementKey []byte, pin string, pinRetries byte, pukRetries byte, rand io.Reader) error {
+func ykSetPinPukRetries(tx *scTx, managementKey []byte, pin string, pinRetries byte, pukRetries byte, rand io.Reader, version *version) error {
 	if pinRetries < 1 || pukRetries < 1 {
 		return fmt.Errorf("pinRetries and pukRetries must both be greater than zero")
 	}
 
 	// NOTE: this action requires the management key AND PIN to be authenticated on
 	// the same transaction. It doesn't work otherwise.
-	if err := ykAuthenticate(tx, managementKey, rand); err != nil {
+	if err := ykAuthenticate(tx, managementKey, rand, version); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 	if err := ykLogin(tx, pin); err != nil {
