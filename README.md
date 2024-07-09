@@ -75,7 +75,7 @@ if err != nil {
 The PIV applet has three unique credentials:
 
 * Management key (3DES key) used to generate new keys on the YubiKey.
-  * YubiKey firmware 5.4.0+ adds support for AES128/192/256 keys
+	* YubiKey firmware 5.4.0+ adds support for AES128/192/256 keys
 * PIN (up to 8 digits, usually 6) used to access signing operations.
 * PUK (up to 8 digits) used to unblock the PIN. Usually set once and thrown
   away or managed by an administrator.
@@ -95,8 +95,8 @@ newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
 if err != nil {
 	// ...
 }
-var newKey [24]byte
-if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
+newKey := make([]byte, 24)
+if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
 	// ...
 }
 // Format with leading zeros.
@@ -104,7 +104,7 @@ newPIN := fmt.Sprintf("%06d", newPINInt)
 newPUK := fmt.Sprintf("%08d", newPUKInt)
 
 // Set all values to a new value.
-if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey[:]); err != nil {
+if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey); err != nil {
 	// ...
 }
 if err := yk.SetPUK(piv.DefaultPUK, newPUK); err != nil {
@@ -114,8 +114,8 @@ if err := yk.SetPIN(piv.DefaultPIN, newPIN); err != nil {
 	// ...
 }
 // Store management key on the YubiKey.
-m := piv.Metadata{ManagementKey: &newKey[:]}
-if err := yk.SetMetadata(newKey[:], m); err != nil {
+m := piv.Metadata{ManagementKey: &newKey}
+if err := yk.SetMetadata(newKey, m); err != nil {
 	// ...
 }
 

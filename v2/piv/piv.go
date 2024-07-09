@@ -369,6 +369,13 @@ var (
 	aidYubiKey    = [...]byte{0xa0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x01}
 )
 
+var managementKeyLengthMap = map[byte]int{
+	alg3DES:   24,
+	algAES128: 16,
+	algAES192: 24,
+	algAES256: 32,
+}
+
 func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version *version) error {
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=92
 	// https://tsapps.nist.gov/publication/get_pdf.cfm?pub_id=918402#page=114
@@ -382,9 +389,10 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version *version) erro
 			param2:      keyCardManagement,
 		}
 		resp, err := tx.Transmit(cmd)
-		if err == nil {
-			managementKeyType = resp[2:][0]
+		if err != nil {
+			return fmt.Errorf("determining key management type: %w", err)
 		}
+		managementKeyType = resp[2:][0]
 	}
 
 	// set challengeLength based on managementKeyType
@@ -396,6 +404,9 @@ func ykAuthenticate(tx *scTx, key []byte, rand io.Reader, version *version) erro
 		// default fallback to 3DES
 		managementKeyType = alg3DES
 		challengeLength = 8
+	}
+	if len(key) != managementKeyLengthMap[managementKeyType] {
+		return fmt.Errorf("invalid management key length: %d bytes (expected %d)", len(key), managementKeyLengthMap[managementKeyType])
 	}
 
 	// request a witness
