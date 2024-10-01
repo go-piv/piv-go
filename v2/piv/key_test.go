@@ -17,6 +17,7 @@ package piv
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -82,6 +83,71 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	if !ecdsa.Verify(pub, data[:], sig.R, sig.S) {
 		t.Errorf("signature didn't match")
 	}
+}
+
+func TestYubiKeyECDSAECDH(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	slot := SlotAuthentication
+
+	key := Key{
+		Algorithm:   AlgorithmEC256,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	pub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an ecdsa key")
+	}
+	pubECDH, err := pub.ECDH()
+	if err != nil {
+		t.Fatalf("converting pubkey to ECDH key: %v", err)
+	}
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	privECDSA, ok := priv.(*ECDSAPrivateKey)
+	if !ok {
+		t.Fatalf("expected private key to be ECDSA private key")
+	}
+
+	t.Run("good", func(t *testing.T) {
+		privECDH, err := ecdh.P256().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("cannot generate key: %v", err)
+		}
+		secret1, err := privECDH.ECDH(pubECDH)
+		if err != nil {
+			t.Fatalf("key agreement 1 failed: %v", err)
+		}
+
+		secret2, err := privECDSA.ECDH(privECDH.PublicKey())
+		if err != nil {
+			t.Fatalf("key agreement 2 failed: %v", err)
+		}
+		if !bytes.Equal(secret1, secret2) {
+			t.Errorf("key agreement didn't match")
+		}
+	})
+
+	t.Run("bad", func(t *testing.T) {
+		t.Run("size", func(t *testing.T) {
+			privECDH, err := ecdh.P384().GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatalf("cannot generate key: %v", err)
+			}
+			_, err = privECDSA.ECDH(privECDH.PublicKey())
+			if !errors.Is(err, errMismatchingAlgorithms) {
+				t.Fatalf("unexpected error value: wanted errMismatchingAlgorithms: %v", err)
+			}
+		})
+	})
 }
 
 func TestYubiKeyECDSASharedKey(t *testing.T) {

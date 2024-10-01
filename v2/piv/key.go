@@ -17,6 +17,7 @@ package piv
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -1151,10 +1152,31 @@ func (k *ECDSAPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.Signer
 // used for the operation. Callers should use a cryptographic key
 // derivation function to extract the amount of bytes they need.
 func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
-	if peer.Curve.Params().BitSize != k.pub.Curve.Params().BitSize {
+	peerECDH, err := peer.ECDH()
+	if err != nil {
+		return nil, unsupportedCurveError{curve: peer.Params().BitSize}
+	}
+	return k.ECDH(peerECDH)
+}
+
+// ECDH performs a Diffie-Hellman key agreement with the peer
+// to produce a shared secret key.
+//
+// Peer's public key must use the same algorithm as the key in
+// this slot, or an error will be returned.
+//
+// Length of the result depends on the types and sizes of the keys
+// used for the operation. Callers should use a cryptographic key
+// derivation function to extract the amount of bytes they need.
+func (k *ECDSAPrivateKey) ECDH(peer *ecdh.PublicKey) ([]byte, error) {
+	ourECDH, err := k.pub.ECDH()
+	if err != nil {
+		return nil, unsupportedCurveError{curve: k.pub.Params().BitSize}
+	}
+	if peer.Curve() != ourECDH.Curve() {
 		return nil, errMismatchingAlgorithms
 	}
-	msg := elliptic.Marshal(peer.Curve, peer.X, peer.Y)
+	msg := peer.Bytes()
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		var alg byte
 		size := k.pub.Params().BitSize
