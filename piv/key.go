@@ -641,7 +641,7 @@ func (ki *KeyInfo) unmarshal(b []byte) error {
 				return errors.New("unknown origin in response")
 			}
 		case 4:
-			ki.PublicKey, err = decodePublic(v.Bytes, ki.Algorithm)
+			ki.PublicKey, err = DecodePublic(v.Bytes, ki.Algorithm)
 			if err != nil {
 				return fmt.Errorf("parse public key: %w", err)
 			}
@@ -795,27 +795,32 @@ type Key struct {
 	TouchPolicy TouchPolicy
 }
 
+func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
+	pub, _, err := yk.GenerateKeyRaw(key, slot, opts)
+	return pub, err
+}
+
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
-func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
+func (yk *YubiKey) GenerateKeyRaw(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, []byte, error) {
 	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
-		return nil, fmt.Errorf("authenticating with management key: %w", err)
+		return nil, nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
 	return ykGenerateKey(yk.tx, slot, opts)
 }
 
-func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
+func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, []byte, error) {
 	alg, ok := algorithmsMap[o.Algorithm]
 	if !ok {
-		return nil, fmt.Errorf("unsupported algorithm")
+		return nil, nil, fmt.Errorf("unsupported algorithm")
 	}
 	tp, ok := touchPolicyMap[o.TouchPolicy]
 	if !ok {
-		return nil, fmt.Errorf("unsupported touch policy")
+		return nil, nil, fmt.Errorf("unsupported touch policy")
 	}
 	pp, ok := pinPolicyMap[o.PINPolicy]
 	if !ok {
-		return nil, fmt.Errorf("unsupported pin policy")
+		return nil, nil, fmt.Errorf("unsupported pin policy")
 	}
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	cmd := apdu{
@@ -831,23 +836,28 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 	}
 	resp, err := tx.Transmit(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("command failed: %w", err)
+		return nil, nil, fmt.Errorf("command failed: %w", err)
 	}
 
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
 	obj, _, err := unmarshalASN1(resp, 1, 0x49)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshal response: %v", err)
+		return nil, nil, fmt.Errorf("unmarshal response: %v", err)
 	}
 
-	return decodePublic(obj, o.Algorithm)
+	key, err := DecodePublic(obj, o.Algorithm)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, obj, nil
+	// return decodePublic(obj, o.Algorithm)
 }
 
-func decodePublic(b []byte, alg Algorithm) (crypto.PublicKey, error) {
+func DecodePublic(asn1Bytes []byte, alg Algorithm) (crypto.PublicKey, error) {
 	var curve elliptic.Curve
 	switch alg {
 	case AlgorithmRSA1024, AlgorithmRSA2048:
-		pub, err := decodeRSAPublic(b)
+		pub, err := decodeRSAPublic(asn1Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("decoding rsa public key: %v", err)
 		}
@@ -857,7 +867,7 @@ func decodePublic(b []byte, alg Algorithm) (crypto.PublicKey, error) {
 	case AlgorithmEC384:
 		curve = elliptic.P384()
 	case AlgorithmEd25519:
-		pub, err := decodeEd25519Public(b)
+		pub, err := decodeEd25519Public(asn1Bytes)
 		if err != nil {
 			return nil, fmt.Errorf("decoding ed25519 public key: %v", err)
 		}
@@ -865,7 +875,7 @@ func decodePublic(b []byte, alg Algorithm) (crypto.PublicKey, error) {
 	default:
 		return nil, fmt.Errorf("unsupported algorithm")
 	}
-	pub, err := decodeECPublic(b, curve)
+	pub, err := decodeECPublic(asn1Bytes, curve)
 	if err != nil {
 		return nil, fmt.Errorf("decoding ec public key: %v", err)
 	}
