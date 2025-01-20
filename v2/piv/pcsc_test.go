@@ -21,6 +21,9 @@ import (
 )
 
 func runContextTest(t *testing.T, f func(t *testing.T, c *scContext)) {
+	if !canModifyYubiKey {
+		t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
+	}
 	ctx, err := newSCContext()
 	if err != nil {
 		t.Fatalf("creating context: %v", err)

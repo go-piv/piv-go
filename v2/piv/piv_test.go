@@ -64,12 +64,20 @@ func testRequiresVersion(t *testing.T, yk *YubiKey, v version) {
 func TestGetVersion(t *testing.T) { runHandleTest(t, testGetVersion) }
 
 func TestCards(t *testing.T) {
+	if !canModifyYubiKey {
+		t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
+	}
+
 	if _, err := Cards(); err != nil {
 		t.Fatalf("listing cards: %v", err)
 	}
 }
 
 func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
+	if !canModifyYubiKey {
+		t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
+	}
+
 	cards, err := Cards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
@@ -77,9 +85,6 @@ func newTestYubiKey(t *testing.T) (*YubiKey, func()) {
 	for _, card := range cards {
 		if !strings.Contains(strings.ToLower(card), "yubikey") {
 			continue
-		}
-		if !canModifyYubiKey {
-			t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
 		}
 		yk, err := Open(card)
 		if err != nil {
@@ -101,6 +106,10 @@ func TestNewYubiKey(t *testing.T) {
 }
 
 func TestMultipleConnections(t *testing.T) {
+	if !canModifyYubiKey {
+		t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
+	}
+
 	cards, err := Cards()
 	if err != nil {
 		t.Fatalf("listing cards: %v", err)
