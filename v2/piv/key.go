@@ -1291,9 +1291,13 @@ type keyEd25519 struct {
 	pp   PINPolicy
 }
 
+type Ed25519Key = keyEd25519
+
 func (k *keyEd25519) Public() crypto.PublicKey {
 	return k.pub
 }
+
+var _ crypto.Signer = (*keyEd25519)(nil)
 
 func (k *keyEd25519) Sign(rand io.Reader, message []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
@@ -1309,9 +1313,13 @@ type keyRSA struct {
 	pp   PINPolicy
 }
 
+type RSAkey = keyRSA
+
 func (k *keyRSA) Public() crypto.PublicKey {
 	return k.pub
 }
+
+var _ crypto.Signer = (*keyRSA)(nil)
 
 func (k *keyRSA) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
