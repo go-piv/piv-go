@@ -106,6 +106,16 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	return &scHandle{handle}, nil
 }
 
+func (h *scHandle) Reconnect() error {
+	var (
+		activeProtocol C.DWORD
+	)
+	return scCheck(C.SCardReconnect(
+		h.h, C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
+		C.SCARD_RESET_CARD, &activeProtocol),
+	)
+}
+
 func (h *scHandle) Close() error {
 	return scCheck(C.SCardDisconnect(h.h, C.SCARD_LEAVE_CARD))
 }

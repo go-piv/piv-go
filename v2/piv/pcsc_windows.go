@@ -26,6 +26,7 @@ var (
 	procSCardListReadersW     = winscard.NewProc("SCardListReadersW")
 	procSCardReleaseContext   = winscard.NewProc("SCardReleaseContext")
 	procSCardConnectW         = winscard.NewProc("SCardConnectW")
+	procSCardReconnect        = winscard.NewProc("SCardReconnect")
 	procSCardDisconnect       = winscard.NewProc("SCardDisconnect")
 	procSCardBeginTransaction = winscard.NewProc("SCardBeginTransaction")
 	procSCardEndTransaction   = winscard.NewProc("SCardEndTransaction")
@@ -70,6 +71,18 @@ func newSCContext() (*scContext, error) {
 		return nil, err
 	}
 	return &scContext{ctx: ctx}, nil
+}
+
+func (h *scHandle) Reconnect() error {
+	var activeProtocol uint16
+	r0, _, _ := procSCardReconnect.Call(
+		uintptr(h.handle),
+		scardShareExclusive,
+		scardProtocolT1,
+		scardLeaveCard,
+		uintptr(activeProtocol),
+	)
+	return scCheck(r0)
 }
 
 func (c *scContext) Close() error {
