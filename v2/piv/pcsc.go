@@ -140,9 +140,10 @@ func (t *scTx) Transmit(d apdu) ([]byte, error) {
 		return resp, nil
 	}
 
+	// Try to reconnect the transaction on SCARD_RESET_CARD
 	var e *scErr
 	if errors.As(err, &e) && e.rc == 0x80100068 {
-		if err := t.refresh(); err != nil {
+		if err := t.reconnect(); err != nil {
 			return nil, fmt.Errorf("refreshing transaction: %w", err)
 		}
 

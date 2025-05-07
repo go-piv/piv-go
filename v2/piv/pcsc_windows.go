@@ -203,7 +203,7 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	return false, nil, &apduErr{sw1, sw2}
 }
 
-func (t *scTx) refresh() error {
+func (t *scTx) reconnect() error {
 	var activeProtocol uint16
 	r0, _, _ := procSCardReconnect.Call(
 		uintptr(t.handle),
@@ -215,6 +215,9 @@ func (t *scTx) refresh() error {
 	if err := scCheck(r0); err != nil {
 		return fmt.Errorf("reconnecting to smart card: %w", err)
 	}
+
+	// On Windows, the PC/SC transaction is released after a call to SCardReconnect.
+	// https://pcsclite.apdu.fr/api/group__API.html
 	r0, _, _ = procSCardBeginTransaction.Call(uintptr(t.handle))
 	if err := scCheck(r0); err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
