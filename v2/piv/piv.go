@@ -260,6 +260,14 @@ func ykLogin(tx *scTx, pin string) error {
 	return nil
 }
 
+// CheckPIN checks if PIN verification is required for this transaction or not.
+//
+// Generally, it is not necessary to call this method directly as PIN will only be
+// prompted as needed by default.
+func (yk *YubiKey) CheckPIN() bool {
+	return ykLoginNeeded(yk.tx)
+}
+
 func ykLoginNeeded(tx *scTx) bool {
 	cmd := apdu{instruction: insVerify, param2: 0x80}
 	_, err := tx.Transmit(cmd)
