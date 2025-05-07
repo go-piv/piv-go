@@ -152,6 +152,7 @@ func (t *scTx) Transmit(d apdu) ([]byte, error) {
 
 	return resp, err
 }
+
 func (t *scTx) transmitApdu(d apdu) ([]byte, error) {
 	data := d.data
 	var resp []byte
