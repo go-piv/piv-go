@@ -129,7 +129,6 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	var resp [C.MAX_BUFFER_SIZE_EXTENDED]byte
 	reqN := C.DWORD(len(req))
 	respN := C.DWORD(len(resp))
-
 	rc := C.SCardTransmit(
 		t.h,
 		C.SCARD_PCI_T1,
