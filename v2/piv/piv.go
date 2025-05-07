@@ -192,25 +192,6 @@ func (c *client) Open(card string) (*YubiKey, error) {
 	return yk, nil
 }
 
-func (y *YubiKey) Refresh() error {
-	if err := y.h.Reconnect(); err != nil {
-		return fmt.Errorf("refreshing connection to smart card: %w", err)
-	}
-
-	tx, err := y.h.Begin()
-	if err != nil {
-		return fmt.Errorf("beginning smart card transaction: %w", err)
-	}
-
-	if err := ykSelectApplication(tx, aidPIV[:]); err != nil {
-		tx.Close()
-		return fmt.Errorf("selecting piv applet: %w", err)
-	}
-
-	y.tx = tx
-	return nil
-}
-
 // Version returns the version as reported by the PIV applet. For newer
 // YubiKeys (>=4.0.0) this corresponds to the version of the YubiKey itself.
 //
@@ -733,7 +714,7 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 		param1:      0x04,
 		data:        id[:],
 	}
-	if _, err := tx.Transmit(cmd); err != nil {
+	if _, err := tx.transmitNoRefresh(cmd); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil

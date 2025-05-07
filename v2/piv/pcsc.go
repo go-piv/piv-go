@@ -135,6 +135,14 @@ type apdu struct {
 }
 
 func (t *scTx) Transmit(d apdu) ([]byte, error) {
+	if err := t.refresh(); err != nil {
+		return nil, fmt.Errorf("refreshing transaction: %w", err)
+	}
+
+	return t.transmitNoRefresh(d)
+}
+
+func (t *scTx) transmitNoRefresh(d apdu) ([]byte, error) {
 	data := d.data
 	var resp []byte
 	const maxAPDUDataSize = 0xff

@@ -106,16 +106,6 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 	return &scHandle{handle}, nil
 }
 
-func (h *scHandle) Reconnect() error {
-	var (
-		activeProtocol C.DWORD
-	)
-	return scCheck(C.SCardReconnect(
-		h.h, C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
-		C.SCARD_RESET_CARD, &activeProtocol),
-	)
-}
-
 func (h *scHandle) Close() error {
 	return scCheck(C.SCardDisconnect(h.h, C.SCARD_LEAVE_CARD))
 }
@@ -139,6 +129,7 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	var resp [C.MAX_BUFFER_SIZE_EXTENDED]byte
 	reqN := C.DWORD(len(req))
 	respN := C.DWORD(len(resp))
+
 	rc := C.SCardTransmit(
 		t.h,
 		C.SCARD_PCI_T1,
@@ -159,4 +150,22 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 		return true, resp[:respN-2], nil
 	}
 	return false, nil, &apduErr{sw1, sw2}
+}
+
+func (t *scTx) refresh() error {
+	var activeProtocol C.DWORD
+	rc := C.SCardReconnect(
+		t.h, C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
+		C.SCARD_RESET_CARD, &activeProtocol,
+	)
+	if err := scCheck(rc); err != nil {
+		return fmt.Errorf("reconnecting to smart card: %w", err)
+	}
+	if err := scCheck(C.SCardBeginTransaction(t.h)); err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if err := ykSelectApplication(t, aidPIV[:]); err != nil {
+		return fmt.Errorf("selecting piv applet: %w", err)
+	}
+	return nil
 }
