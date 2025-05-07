@@ -154,18 +154,8 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 
 func (t *scTx) refresh() error {
 	var activeProtocol C.DWORD
-	rc := C.SCardReconnect(
+	return scCheck(C.SCardReconnect(
 		t.h, C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
 		C.SCARD_RESET_CARD, &activeProtocol,
-	)
-	if err := scCheck(rc); err != nil {
-		return fmt.Errorf("reconnecting to smart card: %w", err)
-	}
-	if err := scCheck(C.SCardBeginTransaction(t.h)); err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	if err := ykSelectApplication(t, aidPIV[:]); err != nil {
-		return fmt.Errorf("selecting piv applet: %w", err)
-	}
-	return nil
+	))
 }
