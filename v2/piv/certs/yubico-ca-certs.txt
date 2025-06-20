@@ -1,0 +1,189 @@
+Yubico Device Attestation CA
+============================
+
+Last Update: 2025-02-03
+
+Yubico manufactures security keys that contain device attestation
+certificates signed by a Yubico CA. This file contains the CA
+certificates that Relying Parties (RP) need to configure their software
+with in order to verify FIDO2, U2F, OpenPGP, PIV and Secure Domain
+attestation certificates of Yubico devices.
+
+This file has been signed with OpenPGP and you should verify the
+signature and the authenticity of the public key before trusting the
+content. The signature is located next to the file:
+
+  https://developers.yubico.com/PKI/yubico-ca-certs.txt
+  https://developers.yubico.com/PKI/yubico-ca-certs.txt.sig
+
+Signing keys and verification instructions are listed here:
+
+  https://developers.yubico.com/Software_Projects/Software_Signing.html
+
+Each CA certificate in this file should, as required, be imported as a
+trusted certificate into your certificate path verification routine.
+Only one trusted certificate is needed for any one verification, but you
+may safely import them all to cover all cases.
+
+Intermediate CA certificates are available in a separate file, with all
+certificates concatenated. It does not have an OpenPGP signature since
+each certificate is already signed by the issuing CA. The file should be
+imported as an untrusted certificate store into your certificate path
+verification routine:
+
+  https://developers.yubico.com/PKI/yubico-intermediate.pem
+
+For example, use a command like the following to verify a YubiKey
+attestation certificate in the file "yubikey-attestation.pem" using
+OpenSSL:
+
+  openssl verify -trusted yubico-fido-ca-1.pem
+                 -trusted yubico-piv-ca-1.pem
+                 -trusted yubico-opgp-ca-1.pem
+                 -trusted yubico-fido-ca-2.pem
+                 -trusted yubico-ca-1.pem
+                 -untrusted 'https://developers.yubico.com/PKI/yubico-intermediate.pem'
+                 yubikey-attestation.pem
+
+With OpenSSL you may also use this file directly as a source of trusted
+certificates:
+
+  openssl verify -trusted yubico-ca-certs.txt
+                 -untrusted 'https://developers.yubico.com/PKI/yubico-intermediate.pem'
+                 yubikey-attestation.pem
+
+We will update this file and the intermediate CAs file from time to time
+when we publish more CA certificates.
+
+
+Name: Yubico U2F Root CA Serial 457200631
+Issued: 2014-08-01
+Address: https://developers.yubico.com/PKI/yubico-fido-ca-1.pem
+         https://developers.yubico.com/PKI/yubico-fido-ca-1.pem.sig
+
+-----BEGIN CERTIFICATE-----
+MIIDHjCCAgagAwIBAgIEG0BT9zANBgkqhkiG9w0BAQsFADAuMSwwKgYDVQQDEyNZ
+dWJpY28gVTJGIFJvb3QgQ0EgU2VyaWFsIDQ1NzIwMDYzMTAgFw0xNDA4MDEwMDAw
+MDBaGA8yMDUwMDkwNDAwMDAwMFowLjEsMCoGA1UEAxMjWXViaWNvIFUyRiBSb290
+IENBIFNlcmlhbCA0NTcyMDA2MzEwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQC/jwYuhBVlqaiYWEMsrWFisgJ+PtM91eSrpI4TK7U53mwCIawSDHy8vUmk
+5N2KAj9abvT9NP5SMS1hQi3usxoYGonXQgfO6ZXyUA9a+KAkqdFnBnlyugSeCOep
+8EdZFfsaRFtMjkwz5Gcz2Py4vIYvCdMHPtwaz0bVuzneueIEz6TnQjE63Rdt2zbw
+nebwTG5ZybeWSwbzy+BJ34ZHcUhPAY89yJQXuE0IzMZFcEBbPNRbWECRKgjq//qT
+9nmDOFVlSRCt2wiqPSzluwn+v+suQEBsUjTGMEd25tKXXTkNW21wIWbxeSyUoTXw
+LvGS6xlwQSgNpk2qXYwf8iXg7VWZAgMBAAGjQjBAMB0GA1UdDgQWBBQgIvz0bNGJ
+hjgpToksyKpP9xv9oDAPBgNVHRMECDAGAQH/AgEAMA4GA1UdDwEB/wQEAwIBBjAN
+BgkqhkiG9w0BAQsFAAOCAQEAjvjuOMDSa+JXFCLyBKsycXtBVZsJ4Ue3LbaEsPY4
+MYN/hIQ5ZM5p7EjfcnMG4CtYkNsfNHc0AhBLdq45rnT87q/6O3vUEtNMafbhU6kt
+hX7Y+9XFN9NpmYxr+ekVY5xOxi8h9JDIgoMP4VB1uS0aunL1IGqrNooL9mmFnL2k
+LVVee6/VR6C5+KSTCMCWppMuJIZII2v9o4dkoZ8Y7QRjQlLfYzd3qGtKbw7xaF1U
+sG/5xUb/Btwb2X2g4InpiB/yt/3CpQXpiWX/K4mBvUKiGn05ZsqeY1gx4g0xLBqc
+U9psmyPzK+Vsgw2jeRQ5JlKDyqE0hebfC1tvFu0CCrJFcw==
+-----END CERTIFICATE-----
+
+
+Name: Yubico PIV Root CA Serial 263751
+Issued: 2016-03-14
+Address: https://developers.yubico.com/PKI/yubico-piv-ca-1.pem
+         https://developers.yubico.com/PKI/yubico-piv-ca-1.pem.sig
+
+-----BEGIN CERTIFICATE-----
+MIIDFzCCAf+gAwIBAgIDBAZHMA0GCSqGSIb3DQEBCwUAMCsxKTAnBgNVBAMMIFl1
+YmljbyBQSVYgUm9vdCBDQSBTZXJpYWwgMjYzNzUxMCAXDTE2MDMxNDAwMDAwMFoY
+DzIwNTIwNDE3MDAwMDAwWjArMSkwJwYDVQQDDCBZdWJpY28gUElWIFJvb3QgQ0Eg
+U2VyaWFsIDI2Mzc1MTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMN2
+cMTNR6YCdcTFRxuPy31PabRn5m6pJ+nSE0HRWpoaM8fc8wHC+Tmb98jmNvhWNE2E
+ilU85uYKfEFP9d6Q2GmytqBnxZsAa3KqZiCCx2LwQ4iYEOb1llgotVr/whEpdVOq
+joU0P5e1j1y7OfwOvky/+AXIN/9Xp0VFlYRk2tQ9GcdYKDmqU+db9iKwpAzid4oH
+BVLIhmD3pvkWaRA2H3DA9t7H/HNq5v3OiO1jyLZeKqZoMbPObrxqDg+9fOdShzgf
+wCqgT3XVmTeiwvBSTctyi9mHQfYd2DwkaqxRnLbNVyK9zl+DzjSGp9IhVPiVtGet
+X02dxhQnGS7K6BO0Qe8CAwEAAaNCMEAwHQYDVR0OBBYEFMpfyvLEojGc6SJf8ez0
+1d8Cv4O/MA8GA1UdEwQIMAYBAf8CAQEwDgYDVR0PAQH/BAQDAgEGMA0GCSqGSIb3
+DQEBCwUAA4IBAQBc7Ih8Bc1fkC+FyN1fhjWioBCMr3vjneh7MLbA6kSoyWF70N3s
+XhbXvT4eRh0hvxqvMZNjPU/VlRn6gLVtoEikDLrYFXN6Hh6Wmyy1GTnspnOvMvz2
+lLKuym9KYdYLDgnj3BeAvzIhVzzYSeU77/Cupofj093OuAswW0jYvXsGTyix6B3d
+bW5yWvyS9zNXaqGaUmP3U9/b6DlHdDogMLu3VLpBB9bm5bjaKWWJYgWltCVgUbFq
+Fqyi4+JE014cSgR57Jcu3dZiehB6UtAPgad9L5cNvua/IWRmm+ANy3O2LH++Pyl8
+SREzU8onbBsjMg9QDiSf5oJLKvd/Ren+zGY7
+-----END CERTIFICATE-----
+
+
+Name: Yubico OpenPGP Attestation CA
+Issued: 2019-08-01
+Address: https://developers.yubico.com/PKI/yubico-opgp-ca-1.pem
+         https://developers.yubico.com/PKI/yubico-opgp-ca-1.pem.sig
+
+-----BEGIN CERTIFICATE-----
+MIIDOTCCAiGgAwIBAgIJAN0XtOvBoi4ZMA0GCSqGSIb3DQEBCwUAMCgxJjAkBgNV
+BAMMHVl1YmljbyBPcGVuUEdQIEF0dGVzdGF0aW9uIENBMB4XDTE5MDgwMTAwMDAw
+MFoXDTQ2MTIxNzAwMDAwMFowKDEmMCQGA1UEAwwdWXViaWNvIE9wZW5QR1AgQXR0
+ZXN0YXRpb24gQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQClkKck
++NEH+iSVLjbOvvreMlvkK4DZ7aETLusDfkEDy5+cv8SHtKSVcYfKhkST1l/5kbyx
+WAnxLRr+aYP52830qkDfYY1OE/IQG76BdWaGZJuMU4cdUPQR21Y7JB+ELHNMQHav
+3CmregKVqIRB6vgwWq/6AM37VKqKNTsBUmrAyihX/vY/kS3L1cP/NCPhUC9Gqab2
+zohxXansjz92+4/dbN1cKDSGI8kVmoLpLbCf/CqGE4lWen0HxMCo/zIZo0nlGS7G
+rEAqN+PRRwiemBZhwBzeYiCLkh7qaqO4O1eWCNLjkJeLwIZ/uyRTESbaFoXOxqFp
+FjIyEjMYIdRXfaHVAgMBAAGjZjBkMB0GA1UdDgQWBBT7/MlvyfSnaal2RJH3cc8m
+ZS4SSjAfBgNVHSMEGDAWgBT7/MlvyfSnaal2RJH3cc8mZS4SSjASBgNVHRMBAf8E
+CDAGAQH/AgEBMA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0BAQsFAAOCAQEAK+TP
+HgYNIFTy+2PXpxmPVnNOcJRcVykAxaLJAAxey2BXy9xmU7lzHbl2x23Lw3kH7Crr
+RqG67WGcwSZzvWWEcbq4zmX3vnu3FOFlqKFhU164tod4cXz1JGsTgfXaPRvoKJAo
+XMotYH/u2UY/K8jmqycgEyHAFc9wx1v/q0H6p4WgbXLu2oBzRodHokgK/6EbIbR+
+Jok3xJ+5haGcMCCz2A8RBah4dxPDNeaz3tSkAjrtwLANV79hAZv2g9CZX6z0H2Zy
+HhK6CLTg2MfwT0NxS3Am76k2opXSqbk8k5nnNFSYFuvgxunQxUOB+3M+gWHmVTh8
+7yaamyNndwmhhIAgeA==
+-----END CERTIFICATE-----
+
+
+Name: Yubico FIDO Root CA Serial 450203556
+Issued: 2024-05-01
+Address: https://developers.yubico.com/PKI/yubico-fido-ca-2.pem
+         https://developers.yubico.com/PKI/yubico-fido-ca-2.pem.sig
+
+-----BEGIN CERTIFICATE-----
+MIIDMzCCAhugAwIBAgIUSOEjTf//yqRfPW7Qq8qtIyCrAg8wDQYJKoZIhvcNAQEL
+BQAwLzEtMCsGA1UEAwwkWXViaWNvIEZJRE8gUm9vdCBDQSBTZXJpYWwgNDUwMjAz
+NTU2MCAXDTI0MDUwMTAwMDAwMFoYDzIwNjAwNDMwMDAwMDAwWjAvMS0wKwYDVQQD
+DCRZdWJpY28gRklETyBSb290IENBIFNlcmlhbCA0NTAyMDM1NTYwggEiMA0GCSqG
+SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCdvl27w2gu1fPXeEFbIdqx0BalvVDVWrQP
+J7HqviuEtZHlxSLxSFtcXpTolvLvof8f4tMerQTkVGzcmYzm1EBT4IJuMmoEqfkE
+EhWpsADMFrjZkqlZY9EqxQzLoVEEonE5oGxSdVCxCcLIackpyR/CCXvj1Bt/hTgE
+9hTlF4pRqxMkx3plF7y8dDZlRHWs7vbnhmBCGeI0ZPEQ6nl2mCg2r74adF2u6K9r
+rLfhBC3QLE8EPrgqUsI+hkuq2tK4M2SMOp8uUVVkqUeu3h0kr3WVI0W02pkgrOgi
+FKLFNkSrbYhdjMBDj5izmqfc9xJRKoDX612qd8ZGVHpT5AYFX+1hAgMBAAGjRTBD
+MB0GA1UdDgQWBBTZyU5DiQ/a2UEgE7qBK0zhIsRNRjASBgNVHRMBAf8ECDAGAQH/
+AgEAMA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0BAQsFAAOCAQEAXvnB4SLuUJfY
+MSVGAhssL/SmWli3FSccgxydvKlACcidIIWKQqa3q/QSUEQzC9DgEfMgr7iC1BkT
+ZbILboV6UZ5knNsvjEZWuMeogJ8tgZs1hVvKwZizwJ+mEcmsjhIrBYuoL1T6yrOJ
+vKFg1jv+Cy4ZwA9Bpk/V3UOir1VyK8dCtyHu6vfosotAdYx8FAuR243gRTMV6Jx8
+Jdig2JDIAQMlzVeDpSUHX/K2HXRHxHwfgjbgUjjBu/72r8OfehyhzHXI3K8CFFdf
+lO+8nEOJK3y8F1ivgS5uN/8SmcYw/STQYwhrxPuwz3nP8baMum4BB2nnYmpB60sX
+3bl5k8QUSw==
+-----END CERTIFICATE-----
+
+
+Name: Yubico Attestation Root 1
+Issued: 2024-12-01
+Address: https://developers.yubico.com/PKI/yubico-ca-1.pem
+         https://developers.yubico.com/PKI/yubico-ca-1.pem.sig
+
+-----BEGIN CERTIFICATE-----
+MIIDPjCCAiagAwIBAgIUXzeiEDJEOTt14F5n0o6Zf/bBwiUwDQYJKoZIhvcNAQEN
+BQAwJDEiMCAGA1UEAwwZWXViaWNvIEF0dGVzdGF0aW9uIFJvb3QgMTAgFw0yNDEy
+MDEwMDAwMDBaGA85OTk5MTIzMTIzNTk1OVowJDEiMCAGA1UEAwwZWXViaWNvIEF0
+dGVzdGF0aW9uIFJvb3QgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+AMZ6/TxM8rIT+EaoPvG81ontMOo/2mQ2RBwJHS0QZcxVaNXvl12LUhBZ5LmiBScI
+Zd1Rnx1od585h+/dhK7hEm7JAALkKKts1fO53KGNLZujz5h3wGncr4hyKF0G74b/
+U3K9hE5mGND6zqYchCRAHfrYMYRDF4YL0X4D5nGdxvppAy6nkEmtWmMnwO3i0TAu
+csrbE485HvGM4r0VpgVdJpvgQjiTJCTIq+D35hwtT8QDIv+nGvpcyi5wcIfCkzyC
+imJukhYy6KoqNMKQEdpNiSOvWyDMTMt1bwCvEzpw91u+msUt4rj0efnO9s0ZOwdw
+MRDnH4xgUl5ZLwrrPkfC1/0CAwEAAaNmMGQwHQYDVR0OBBYEFNLu71oijTptXCOX
+PfKF1SbxJXuSMB8GA1UdIwQYMBaAFNLu71oijTptXCOXPfKF1SbxJXuSMBIGA1Ud
+EwEB/wQIMAYBAf8CAQMwDgYDVR0PAQH/BAQDAgGGMA0GCSqGSIb3DQEBDQUAA4IB
+AQC3IW/sgB9pZ8apJNjxuGoX+FkILks0wMNrdXL/coUvsrhzsvl6mePMrbGJByJ1
+XnquB5sgcRENFxdQFma3mio8Upf1owM1ZreXrJ0mADG2BplqbJnxiyYa+R11reIF
+TWeIhMNcZKsDZrFAyPuFjCWSQvJmNWe9mFRYFgNhXJKkXIb5H1XgEDlwiedYRM7V
+olBNlld6pRFKlX8ust6OTMOeADl2xNF0m1LThSdeuXvDyC1g9+ILfz3S6OIYgc3i
+roRcFD354g7rKfu67qFAw9gC4yi0xBTPrY95rh4/HqaUYCA/L8ldRk6H7Xk35D+W
+Vpmq2Sh/xT5HiFuhf4wJb0bK
+-----END CERTIFICATE-----
