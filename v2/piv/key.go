@@ -440,7 +440,7 @@ type Algorithm int
 // Algorithms supported by this package. Note that not all cards will support
 // every algorithm.
 //
-// For algorithm discovery, see: https://github.com/ericchiang/piv-go/issues/1
+// For algorithm discovery, see: https://github.com/go-piv/piv-go/issues/1
 const (
 	AlgorithmEC256 Algorithm = iota + 1
 	AlgorithmEC384
