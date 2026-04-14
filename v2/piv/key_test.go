@@ -1651,3 +1651,92 @@ func ephemeralKey(t *testing.T, alg Algorithm) privateKey {
 	}
 	return key
 }
+
+func TestFindTLVTag(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      []byte
+		targetTag uint32
+		want      []byte
+		wantErr   error
+	}{
+		{
+			name:      "simple tag",
+			data:      []byte{0x04, 0x01, 0x42},
+			targetTag: 0x04,
+			want:      []byte{0x42},
+		},
+		{
+			name:      "tag not found",
+			data:      []byte{0x04, 0x01, 0x42},
+			targetTag: 0x05,
+			wantErr:   errTagNotFound,
+		},
+		{
+			name:      "multi-byte tag (2 bytes)",
+			data:      []byte{0x5F, 0x20, 0x02, 0xAB, 0xCD},
+			targetTag: 0x5F20,
+			want:      []byte{0xAB, 0xCD},
+		},
+		{
+			name:      "multi-byte tag (3 bytes)",
+			data:      []byte{0x7F, 0x81, 0x20, 0x01, 0xFF},
+			targetTag: 0x7F8120,
+			want:      []byte{0xFF},
+		},
+		{
+			name:      "multi-byte tag (4 bytes)",
+			data:      []byte{0x7F, 0x81, 0x92, 0x20, 0x01, 0xFF},
+			targetTag: 0x7F819220,
+			want:      []byte{0xFF},
+		},
+		{
+			name:      "multi-byte tag too long",
+			data:      []byte{0x5F, 0x81, 0x81, 0x81, 0x81, 0x01, 0x01, 0xFF},
+			targetTag: 0x04,
+			wantErr:   errMalformedTLV,
+		},
+		{
+			name:      "long form length",
+			data:      append(append([]byte{0x05, 0x81, 0x80}, bytes.Repeat([]byte{0x11}, 128)...), 0x06, 0x01, 0x22),
+			targetTag: 0x06,
+			want:      []byte{0x22},
+		},
+		{
+			name:      "malformed TLV (EOF in tag)",
+			data:      []byte{0x5F},
+			targetTag: 0x04,
+			wantErr:   errMalformedTLV,
+		},
+		{
+			name:      "malformed TLV (EOF in length)",
+			data:      []byte{0x04},
+			targetTag: 0x04,
+			wantErr:   errMalformedTLV,
+		},
+		{
+			name:      "malformed TLV (EOF in value)",
+			data:      []byte{0x04, 0x02, 0x42},
+			targetTag: 0x04,
+			wantErr:   errMalformedTLV,
+		},
+		{
+			name:      "malformed TLV (indefinite length unsupported)",
+			data:      []byte{0x04, 0x80, 0x42, 0x00, 0x00},
+			targetTag: 0x04,
+			wantErr:   errMalformedTLV,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := findTLVTag(tt.data, tt.targetTag)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("findTLVTag() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !bytes.Equal(got, tt.want) {
+				t.Errorf("findTLVTag() got = %x, want %x", got, tt.want)
+			}
+		})
+	}
+}
