@@ -13,7 +13,7 @@ jobs:
   build:
     strategy:
       matrix:
-        go-version: [1.22.x, 1.23.x]
+        go-version: [1.25.x, 1.26.x]
     name: Linux
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +24,8 @@ jobs:
       id: go
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
+    - name: Apt update
+      run: sudo apt-get update
     - name: Install libpcsc
       run: sudo apt-get install -y libpcsclite-dev pcscd pcsc-tools
     - name: Test
@@ -31,7 +33,7 @@ jobs:
   build-windows:
     strategy:
       matrix:
-        go-version: [1.21.x, 1.22.x]
+        go-version: [1.25.x, 1.26.x]
     name: Windows
     runs-on: windows-latest
     steps:
