@@ -733,7 +733,7 @@ func ykSelectApplication(tx *scTx, id []byte) error {
 		param1:      0x04,
 		data:        id[:],
 	}
-	if _, err := tx.Transmit(cmd); err != nil {
+	if _, err := tx.transmitApdu(cmd); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil

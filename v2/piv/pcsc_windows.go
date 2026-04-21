@@ -26,6 +26,7 @@ var (
 	procSCardListReadersW     = winscard.NewProc("SCardListReadersW")
 	procSCardReleaseContext   = winscard.NewProc("SCardReleaseContext")
 	procSCardConnectW         = winscard.NewProc("SCardConnectW")
+	procSCardReconnect        = winscard.NewProc("SCardReconnect")
 	procSCardDisconnect       = winscard.NewProc("SCardDisconnect")
 	procSCardBeginTransaction = winscard.NewProc("SCardBeginTransaction")
 	procSCardEndTransaction   = winscard.NewProc("SCardEndTransaction")
@@ -200,4 +201,29 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 		return true, resp[:respN-2], nil
 	}
 	return false, nil, &apduErr{sw1, sw2}
+}
+
+func (t *scTx) reconnect() error {
+	var activeProtocol uint16
+	r0, _, _ := procSCardReconnect.Call(
+		uintptr(t.handle),
+		scardShareExclusive,
+		scardProtocolT1,
+		scardLeaveCard,
+		uintptr(activeProtocol),
+	)
+	if err := scCheck(r0); err != nil {
+		return fmt.Errorf("reconnecting to smart card: %w", err)
+	}
+
+	// On Windows, the PC/SC transaction is released after a call to SCardReconnect.
+	// https://pcsclite.apdu.fr/api/group__API.html
+	r0, _, _ = procSCardBeginTransaction.Call(uintptr(t.handle))
+	if err := scCheck(r0); err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if err := ykSelectApplication(t, aidPIV[:]); err != nil {
+		return fmt.Errorf("selecting piv applet: %w", err)
+	}
+	return nil
 }

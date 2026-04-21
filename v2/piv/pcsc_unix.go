@@ -150,3 +150,11 @@ func (t *scTx) transmit(req []byte) (more bool, b []byte, err error) {
 	}
 	return false, nil, &apduErr{sw1, sw2}
 }
+
+func (t *scTx) reconnect() error {
+	var activeProtocol C.DWORD
+	return scCheck(C.SCardReconnect(
+		t.h, C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
+		C.SCARD_RESET_CARD, &activeProtocol,
+	))
+}

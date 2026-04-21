@@ -136,6 +136,25 @@ type apdu struct {
 }
 
 func (t *scTx) Transmit(d apdu) ([]byte, error) {
+	resp, err := t.transmitApdu(d)
+	if err == nil {
+		return resp, nil
+	}
+
+	// Try to reconnect the transaction on SCARD_RESET_CARD
+	var e *scErr
+	if errors.As(err, &e) && e.rc == 0x80100068 {
+		if err := t.reconnect(); err != nil {
+			return nil, fmt.Errorf("refreshing transaction: %w", err)
+		}
+
+		resp, err = t.transmitApdu(d)
+	}
+
+	return resp, err
+}
+
+func (t *scTx) transmitApdu(d apdu) ([]byte, error) {
 	data := d.data
 	var resp []byte
 	const maxAPDUDataSize = 0xff
