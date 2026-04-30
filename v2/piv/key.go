@@ -736,6 +736,35 @@ func (yk *YubiKey) KeyInfo(slot Slot) (KeyInfo, error) {
 	return ki, nil
 }
 
+// Object returns the raw object stored in a given slot.
+func (yk *YubiKey) Object(slot Slot) ([]byte, error) {
+	cmd := apdu{
+		instruction: insGetData,
+		param1:      0x3f,
+		param2:      0xff,
+		data: []byte{
+			0x5c, // Tag list
+			0x03, // Length of tag
+			byte(slot.Object >> 16),
+			byte(slot.Object >> 8),
+			byte(slot.Object),
+		},
+	}
+
+	resp, err := yk.tx.Transmit(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=85
+	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
+	}
+
+	return obj, nil
+}
+
 // Certificate returns the certifiate object stored in a given slot.
 //
 // If a certificate hasn't been set in the provided slot, the returned error
@@ -906,6 +935,37 @@ func marshalASN1(tag byte, data []byte) []byte {
 	l := marshalASN1Length(uint64(len(data)))
 	d := append([]byte{tag}, l...)
 	return append(d, data...)
+}
+
+// SetObject stores a raw object in the provided slot.
+func (yk *YubiKey) SetObject(key []byte, slot Slot, obj []byte) error {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
+		return fmt.Errorf("authenticating with management key: %w", err)
+	}
+	return ykStoreObject(yk.tx, slot, obj)
+}
+
+func ykStoreObject(tx *scTx, slot Slot, obj []byte) error {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=40
+	data := marshalASN1(0x70, obj)
+
+	data = append([]byte{
+		0x5c, // Tag list
+		0x03, // Length of tag
+		byte(slot.Object >> 16),
+		byte(slot.Object >> 8),
+		byte(slot.Object),
+	}, marshalASN1(0x53, data)...)
+	cmd := apdu{
+		instruction: insPutData,
+		param1:      0x3f,
+		param2:      0xff,
+		data:        data,
+	}
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %v", err)
+	}
+	return nil
 }
 
 // SetCertificate stores a certificate object in the provided slot. Setting a
