@@ -812,9 +812,9 @@ func (m *Metadata) marshal() ([]byte, error) {
 		}
 		return append([]byte{
 			0x88,
-			26,
+			byte(len(*m.ManagementKey) + 2),
 			0x89,
-			24,
+			byte(len(*m.ManagementKey)), 
 		}, *m.ManagementKey...), nil
 	}
 
