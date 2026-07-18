@@ -140,3 +140,36 @@ func TestErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestSCError(t *testing.T) {
+	// as32 returns rc as it arrives through a 32 bit signed C type (long on
+	// 32 bit unix, int on darwin): the leading bit is read as a sign bit.
+	as32 := func(rc uint32) int64 { return int64(int32(rc)) }
+
+	tests := []struct {
+		rc   int64
+		desc string
+	}{
+		{0x8010000b, "the smart card cannot be accessed because of other connections outstanding"},
+		{as32(0x8010000b), "the smart card cannot be accessed because of other connections outstanding"},
+		{0x8010000c, "the operation requires a Smart Card, but no Smart Card is currently in the device"},
+		{as32(0x8010000c), "the operation requires a Smart Card, but no Smart Card is currently in the device"},
+		{0x80100069, "the smart card has been removed, so further communication is not possible"},
+		{as32(0x80100069), "the smart card has been removed, so further communication is not possible"},
+		{0x00000000, "no error was encountered"},
+		{0x0000ffff, "unknown pcsc return code 0x0000ffff"},
+		{as32(0x80100022), "unknown pcsc return code 0x80100022"},
+	}
+
+	for _, tc := range tests {
+		e := newSCErr(tc.rc)
+		if got := e.Error(); got != tc.desc {
+			t.Errorf("return code 0x%08x: got %q, want %q", tc.rc, got, tc.desc)
+		}
+		// Callers compare against rc directly, so the field itself must hold
+		// the positive code, not just render as one.
+		if e.rc < 0 {
+			t.Errorf("return code 0x%08x: rc field holds 0x%x, want the positive code", tc.rc, e.rc)
+		}
+	}
+}

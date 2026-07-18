@@ -22,7 +22,7 @@ func scCheck(rc C.long) error {
 	if rc == rcSuccess {
 		return nil
 	}
-	return &scErr{int64(rc)}
+	return newSCErr(int64(rc))
 }
 
 func isRCNoReaders(rc C.long) bool {
