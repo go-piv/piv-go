@@ -147,6 +147,58 @@ func TestMultipleConnections(t *testing.T) {
 	t.Skip("no yubikeys detected, skipping")
 }
 
+func TestOpenErrorReleasesCard(t *testing.T) {
+	if !canModifyYubiKey {
+		t.Skip("not running test that accesses yubikey, provide --wipe-yubikey flag")
+	}
+
+	cards, err := Cards()
+	if err != nil {
+		t.Fatalf("listing cards: %v", err)
+	}
+	for _, card := range cards {
+		if !strings.Contains(strings.ToLower(card), "yubikey") {
+			continue
+		}
+
+		// Selecting an applet that isn't installed fails Open after it has
+		// already connected to the card, the same path taken by a reader
+		// holding a card that doesn't implement PIV.
+		//
+		// Change a byte in place rather than assigning a new AID, so this
+		// doesn't depend on the length of aidPIV, which #189 would grow. The
+		// byte is inside the PIV AID itself, so the select still misses on a
+		// card that matches a truncated AID.
+		aid := aidPIV
+		aidPIV[4] = 0xff
+		yk, err := Open(card)
+		aidPIV = aid
+		if err == nil {
+			yk.Close()
+			t.Fatalf("expected open to fail selecting piv applet")
+		}
+		// A card held by another process fails Open at the connect instead,
+		// which never reaches the path under test and would make the open
+		// below fail for an unrelated reason.
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected open to fail selecting piv applet, got: %v", err)
+		}
+
+		// Open holds the card exclusively and returns no handle on failure, so
+		// if it didn't release the card itself this reports a sharing
+		// violation.
+		yk, err = Open(card)
+		if err != nil {
+			t.Fatalf("opening yubikey after a failed open: %v", err)
+		}
+		if err := yk.Close(); err != nil {
+			t.Errorf("closing yubikey: %v", err)
+		}
+		return
+	}
+	t.Skip("no yubikeys detected, skipping")
+}
+
 func TestYubiKeySerial(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
