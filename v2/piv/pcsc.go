@@ -24,6 +24,22 @@ type scErr struct {
 	rc int64
 }
 
+// newSCErr builds an scErr from a PC/SC return code.
+//
+// Where the C type holding the code is a 32 bit signed integer (C.int on
+// darwin always, C.long on the other cgo unix platforms when the platform
+// is 32 bit), the leading bit of a code such as 0x8010000b is a sign bit,
+// so the code arrives negative and matches nothing in pcscErrMsgs. newSCErr
+// corrects it back to the positive value pcscErrMsgs is keyed on.
+//
+// https://github.com/go-piv/piv-go/issues/53
+func newSCErr(rc int64) *scErr {
+	if rc < 0 {
+		rc += 1 << 32
+	}
+	return &scErr{rc}
+}
+
 func (e *scErr) Error() string {
 	if msg, ok := pcscErrMsgs[e.rc]; ok {
 		return msg

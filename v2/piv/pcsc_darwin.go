@@ -20,15 +20,7 @@ func scCheck(rc C.int) error {
 	if rc == rcSuccess {
 		return nil
 	}
-	i := int64(rc)
-	if i < 0 {
-		// On MacOS, int isn't big enough to handle the return codes so the
-		// leading bit becomes a two's complement bit. If the return code is
-		// negative, correct this.
-		// https://github.com/go-piv/piv-go/issues/53
-		i += (1 << 32)
-	}
-	return &scErr{i}
+	return newSCErr(int64(rc))
 }
 
 func isRCNoReaders(rc C.int) bool {
