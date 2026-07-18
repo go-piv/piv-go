@@ -164,8 +164,13 @@ func TestOpenErrorReleasesCard(t *testing.T) {
 		// Selecting an applet that isn't installed fails Open after it has
 		// already connected to the card, the same path taken by a reader
 		// holding a card that doesn't implement PIV.
+		//
+		// Change a byte in place rather than assigning a new AID, so this
+		// doesn't depend on the length of aidPIV, which #189 would grow. The
+		// byte is inside the PIV AID itself, so the select still misses on a
+		// card that matches a truncated AID.
 		aid := aidPIV
-		aidPIV = [...]byte{0xa0, 0x00, 0x00, 0x03, 0xff}
+		aidPIV[4] = 0xff
 		yk, err := Open(card)
 		aidPIV = aid
 		if err == nil {
