@@ -140,3 +140,16 @@ func TestErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestErrSecurityStatusNotSatisfied(t *testing.T) {
+	err := &apduErr{0x69, 0x82}
+	if !errors.Is(err, ErrSecurityStatusNotSatisfied) {
+		t.Errorf("0x6982 should unwrap to ErrSecurityStatusNotSatisfied")
+	}
+	if errors.Is(&apduErr{0x6a, 0x82}, ErrSecurityStatusNotSatisfied) {
+		t.Errorf("0x6a82 should not be ErrSecurityStatusNotSatisfied")
+	}
+	if got, want := err.Error(), "smart card error 6982: security status not satisfied"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
