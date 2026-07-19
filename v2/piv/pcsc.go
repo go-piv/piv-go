@@ -50,10 +50,15 @@ func (v AuthErr) Error() string {
 // ErrNotFound is returned when the requested object on the smart card is not found.
 var ErrNotFound = errors.New("data object or application not found")
 
+// ErrSecurityStatusNotSatisfied is returned when the card reports that a
+// security condition, such as PIN verification or a required touch, was not
+// satisfied.
+var ErrSecurityStatusNotSatisfied = errors.New("security status not satisfied")
+
 // apduErr is an error interacting with the PIV application on the smart card.
-// This error may wrap more accessible errors, like ErrNotFound or an instance
-// of AuthErr, so callers are encouraged to use errors.Is and errors.As for
-// these common cases.
+// This error may wrap more accessible errors, like ErrNotFound,
+// ErrSecurityStatusNotSatisfied, or an instance of AuthErr, so callers are
+// encouraged to use errors.Is and errors.As for these common cases.
 type apduErr struct {
 	sw1 byte
 	sw2 byte
@@ -112,6 +117,8 @@ func (a *apduErr) Unwrap() error {
 		return ErrNotFound
 	case st == 0x6a88:
 		return ErrNotFound
+	case st == 0x6982:
+		return ErrSecurityStatusNotSatisfied
 	case st == 0x6300:
 		return AuthErr{0}
 	case st == 0x6983:
