@@ -1740,3 +1740,96 @@ func TestFindTLVTag(t *testing.T) {
 		})
 	}
 }
+
+func TestAccessInfoUnmarshal(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want AccessInfo
+	}{
+		{
+			"default pin",
+			[]byte{0x01, 0x01, 0xff, 0x05, 0x01, 0x01, 0x06, 0x02, 0x03, 0x03},
+			AccessInfo{IsDefault: true, RetriesTotal: 3, RetriesRemaining: 3},
+		},
+		{
+			"changed pin with a failed attempt",
+			[]byte{0x01, 0x01, 0xff, 0x05, 0x01, 0x00, 0x06, 0x02, 0x08, 0x07},
+			AccessInfo{IsDefault: false, RetriesTotal: 8, RetriesRemaining: 7},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got AccessInfo
+			if err := got.unmarshal(tt.data); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAccessInfo(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	testRequiresVersion(t, yk, version53)
+
+	if err := yk.Reset(); err != nil {
+		t.Fatalf("resetting key: %v", err)
+	}
+
+	pin, err := yk.PINInfo()
+	if err != nil {
+		t.Fatalf("getting pin info: %v", err)
+	}
+	if !pin.IsDefault {
+		t.Error("pin should be default after a reset")
+	}
+	if pin.RetriesTotal == 0 || pin.RetriesRemaining != pin.RetriesTotal {
+		t.Errorf("unexpected pin retries: %d of %d", pin.RetriesRemaining, pin.RetriesTotal)
+	}
+
+	puk, err := yk.PUKInfo()
+	if err != nil {
+		t.Fatalf("getting puk info: %v", err)
+	}
+	if !puk.IsDefault {
+		t.Error("puk should be default after a reset")
+	}
+
+	if err := yk.SetPIN(DefaultPIN, "654321"); err != nil {
+		t.Fatalf("setting pin: %v", err)
+	}
+
+	pin, err = yk.PINInfo()
+	if err != nil {
+		t.Fatalf("getting pin info after change: %v", err)
+	}
+	if pin.IsDefault {
+		t.Error("pin should not be default after being changed")
+	}
+
+	puk, err = yk.PUKInfo()
+	if err != nil {
+		t.Fatalf("getting puk info after pin change: %v", err)
+	}
+	if !puk.IsDefault {
+		t.Error("puk should still be default after only the pin was changed")
+	}
+
+	if err := yk.SetPUK(DefaultPUK, "87654321"); err != nil {
+		t.Fatalf("setting puk: %v", err)
+	}
+
+	puk, err = yk.PUKInfo()
+	if err != nil {
+		t.Fatalf("getting puk info after change: %v", err)
+	}
+	if puk.IsDefault {
+		t.Error("puk should not be default after being changed")
+	}
+}

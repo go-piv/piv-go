@@ -702,15 +702,9 @@ func (ki *KeyInfo) unmarshal(b []byte) error {
 				return fmt.Errorf("parse public key: %w", err)
 			}
 		default:
-			// TODO: According to the Yubico website, we get two more fields,
-			// if we pass 0x80 or 0x81 as slots:
-			//     1. Default value (for PIN/PUK and management key): Whether the
-			//        default value is used.
-			//     2. Retries (for PIN/PUK): The number of retries remaining
-			// However, it seems the reference implementation does not expect
-			// these and can not parse them out:
-			// https://github.com/Yubico/yubico-piv-tool/blob/yubico-piv-tool-2.3.1/lib/util.c#L1529
-			// For now, we just ignore them.
+			// The PIN and PUK slots return a default value indicator and retry
+			// counts, which have no meaning for a key slot. See AccessInfo,
+			// PINInfo and PUKInfo.
 		}
 	}
 	return nil
@@ -734,6 +728,88 @@ func (yk *YubiKey) KeyInfo(slot Slot) (KeyInfo, error) {
 		return KeyInfo{}, err
 	}
 	return ki, nil
+}
+
+// The PIN and the PUK are addressed as slots by the Yubico GET METADATA
+// extension. They are not key slots and cannot be used with KeyInfo.
+const (
+	accessSlotPIN = 0x80
+	accessSlotPUK = 0x81
+)
+
+// AccessInfo holds metadata about the PIN or the PUK.
+type AccessInfo struct {
+	// IsDefault reports whether the value is still the one the YubiKey was
+	// manufactured with, DefaultPIN or DefaultPUK. A PUK left at its default is
+	// worth noticing: it replaces the PIN without knowledge of the old PIN and
+	// without disturbing any keys, so it overrides whatever the PIN is set to.
+	IsDefault bool
+	// RetriesTotal is the number of consecutive incorrect attempts allowed
+	// before the value blocks.
+	RetriesTotal int
+	// RetriesRemaining is the number of attempts left before it blocks. A
+	// successful verification resets it to RetriesTotal.
+	RetriesRemaining int
+}
+
+func (ai *AccessInfo) unmarshal(b []byte) error {
+	for len(b) > 0 {
+		var v asn1.RawValue
+		rest, err := asn1.Unmarshal(b, &v)
+		if err != nil {
+			return err
+		}
+		b = rest
+		if v.Class != 0 || v.IsCompound {
+			continue
+		}
+		switch v.Tag {
+		case 5:
+			if len(v.Bytes) != 1 {
+				return errors.New("invalid default value in response")
+			}
+			ai.IsDefault = v.Bytes[0] != 0x00
+		case 6:
+			if len(v.Bytes) != 2 {
+				return errors.New("invalid retries in response")
+			}
+			ai.RetriesTotal = int(v.Bytes[0])
+			ai.RetriesRemaining = int(v.Bytes[1])
+		}
+	}
+	return nil
+}
+
+// PINInfo returns metadata about the PIN, including whether it is still the
+// default. It neither verifies the PIN nor consumes an attempt. It is only
+// supported by YubiKeys with a version >= 5.3.0.
+func (yk *YubiKey) PINInfo() (AccessInfo, error) {
+	return yk.accessInfo(accessSlotPIN)
+}
+
+// PUKInfo returns metadata about the PUK, including whether it is still the
+// default. It neither verifies the PUK nor consumes an attempt. It is only
+// supported by YubiKeys with a version >= 5.3.0.
+func (yk *YubiKey) PUKInfo() (AccessInfo, error) {
+	return yk.accessInfo(accessSlotPUK)
+}
+
+func (yk *YubiKey) accessInfo(slot byte) (AccessInfo, error) {
+	// https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html#_get_metadata
+	cmd := apdu{
+		instruction: insGetMetadata,
+		param1:      0x00,
+		param2:      slot,
+	}
+	resp, err := yk.tx.Transmit(cmd)
+	if err != nil {
+		return AccessInfo{}, fmt.Errorf("command failed: %w", err)
+	}
+	var ai AccessInfo
+	if err := ai.unmarshal(resp); err != nil {
+		return AccessInfo{}, err
+	}
+	return ai, nil
 }
 
 // Certificate returns the certifiate object stored in a given slot.
