@@ -29,6 +29,7 @@ package piv
 // #cgo openbsd CFLAGS: -I/usr/local/include/PCSC
 // #cgo openbsd LDFLAGS: -L/usr/local/lib/
 // #cgo openbsd LDFLAGS: -lpcsclite
+// #include <stdlib.h>
 // #include <PCSC/winscard.h>
 // #include <PCSC/wintypes.h>
 import "C"
@@ -73,6 +74,10 @@ func (c *scContext) ListReaders() ([]string, error) {
 		return nil, err
 	}
 
+	if n == 0 {
+		return nil, nil
+	}
+
 	d := make([]byte, n)
 	rc = C.SCardListReaders(c.ctx, nil, (*C.char)(unsafe.Pointer(&d[0])), &n)
 	if err := scCheck(rc); err != nil {
@@ -97,7 +102,9 @@ func (c *scContext) Connect(reader string) (*scHandle, error) {
 		handle         C.SCARDHANDLE
 		activeProtocol C.DWORD
 	)
-	rc := C.SCardConnect(c.ctx, C.CString(reader),
+	readerCStr := C.CString(reader)
+	defer C.free(unsafe.Pointer(readerCStr))
+	rc := C.SCardConnect(c.ctx, readerCStr,
 		C.SCARD_SHARE_EXCLUSIVE, C.SCARD_PROTOCOL_T1,
 		&handle, &activeProtocol)
 	if err := scCheck(rc); err != nil {
