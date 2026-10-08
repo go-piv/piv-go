@@ -921,17 +921,23 @@ func ykGetProtectedMetadata(tx *scTx, pin string) (*Metadata, error) {
 }
 
 func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata, rand io.Reader, version *version) error {
-	data, err := m.marshal()
+	obj, err := m.marshal()
 	if err != nil {
 		return fmt.Errorf("encoding metadata: %v", err)
 	}
-	data = append([]byte{
+	// Check what's actually being stored, since marshal writes m.raw unchanged
+	// if m.ManagementKey is nil.
+	var stored Metadata
+	if err := stored.unmarshal(obj); err != nil {
+		return fmt.Errorf("unmarshal encoded metadata: %v", err)
+	}
+	data := append([]byte{
 		0x5c, // Tag list
 		0x03,
 		0x5f,
 		0xc1,
 		0x09,
-	}, marshalASN1(0x53, data)...)
+	}, marshalASN1(0x53, obj)...)
 	// NOTE: for some reason this action requires the management key authenticated
 	// on the same transaction. It doesn't work otherwise.
 	if err := ykAuthenticate(tx, key, rand, version); err != nil {
@@ -946,7 +952,238 @@ func ykSetProtectedMetadata(tx *scTx, key []byte, m *Metadata, rand io.Reader, v
 	if _, err := tx.Transmit(cmd); err != nil {
 		return fmt.Errorf("command failed: %w", err)
 	}
+	// YubiKey Manager only uses a management key stored in the protected
+	// metadata if a flag is set in its unprotected metadata.
+	//
+	// https://github.com/go-piv/piv-go/issues/34
+	if err := ykSetPivmanKeyStored(tx, stored.ManagementKey != nil); err != nil {
+		return fmt.Errorf("updating pivman data: %w", err)
+	}
 	return nil
+}
+
+// Object IDs for data objects that aren't tied to a slot.
+const (
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=30
+	objectCardID = 0x5fc102
+	// Unprotected metadata used by YubiKey Manager. Non-standard.
+	//
+	// https://github.com/Yubico/yubikey-manager/blob/5.9.0/ykman/piv.py#L75
+	objectPivmanData = 0x5fff00
+)
+
+func ykGetObject(tx *scTx, id uint32) ([]byte, error) {
+	cmd := apdu{
+		instruction: insGetData,
+		param1:      0x3f,
+		param2:      0xff,
+		data: []byte{
+			0x5c, // Tag list
+			0x03,
+			byte(id >> 16),
+			byte(id >> 8),
+			byte(id),
+		},
+	}
+	resp, err := tx.Transmit(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=86
+	obj, _, err := unmarshalASN1(resp, 1, 0x13) // tag 0x53
+	if err != nil {
+		return nil, fmt.Errorf("unmarshaling response: %v", err)
+	}
+	return obj, nil
+}
+
+// ykPutObject stores a data object, or deletes it if obj is empty. This
+// requires authenticating with the management key on the same transaction.
+func ykPutObject(tx *scTx, id uint32, obj []byte) error {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
+	data := append([]byte{
+		0x5c, // Tag list
+		0x03,
+		byte(id >> 16),
+		byte(id >> 8),
+		byte(id),
+	}, marshalASN1(0x53, obj)...)
+	cmd := apdu{
+		instruction: insPutData,
+		param1:      0x3f,
+		param2:      0xff,
+		data:        data,
+	}
+	if _, err := tx.Transmit(cmd); err != nil {
+		return fmt.Errorf("command failed: %w", err)
+	}
+	return nil
+}
+
+// pivmanData is the unprotected metadata YubiKey Manager stores alongside the
+// protected Metadata. Only the flags are interpreted. Other fields, such as the
+// salt for a PIN derived management key, are preserved as is.
+//
+// https://github.com/Yubico/yubikey-manager/blob/5.9.0/ykman/piv.py#L209
+type pivmanData struct {
+	flags byte
+	// rest holds the encoded fields other than the flags.
+	rest []byte
+}
+
+// pivmanFlagKeyStored indicates the management key is stored in the protected
+// Metadata.
+const pivmanFlagKeyStored = 0x02
+
+func (p *pivmanData) marshal() []byte {
+	var data []byte
+	if p.flags != 0 {
+		data = marshalASN1(0x81, []byte{p.flags})
+	}
+	data = append(data, p.rest...)
+	if len(data) == 0 {
+		return nil
+	}
+	return marshalASN1(0x80, data)
+}
+
+func (p *pivmanData) unmarshal(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+	d, _, err := unmarshalASN1(b, 2, 0x00) // tag 0x80
+	if err != nil {
+		return err
+	}
+	for len(d) > 0 {
+		var v asn1.RawValue
+		d, err = asn1.Unmarshal(d, &v)
+		if err != nil {
+			return fmt.Errorf("unmarshal pivman data field: %v", err)
+		}
+		if !bytes.HasPrefix(v.FullBytes, []byte{0x81}) {
+			p.rest = append(p.rest, v.FullBytes...)
+			continue
+		}
+		// 0x81 indicates flags
+		if len(v.Bytes) != 1 {
+			return fmt.Errorf("invalid pivman flags length: %d", len(v.Bytes))
+		}
+		p.flags = v.Bytes[0]
+	}
+	return nil
+}
+
+// ykSetPivmanKeyStored sets or clears the flag YubiKey Manager uses to find a
+// management key stored in the protected Metadata. This requires
+// authenticating with the management key on the same transaction.
+func ykSetPivmanKeyStored(tx *scTx, stored bool) error {
+	var p pivmanData
+	obj, err := ykGetObject(tx, objectPivmanData)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("getting pivman data: %w", err)
+	}
+	if err := p.unmarshal(obj); err != nil {
+		return fmt.Errorf("unmarshal pivman data: %v", err)
+	}
+	flags := p.flags
+	if stored {
+		p.flags |= pivmanFlagKeyStored
+	} else {
+		p.flags &^= pivmanFlagKeyStored
+	}
+	if p.flags == flags {
+		return nil
+	}
+	return ykPutObject(tx, objectPivmanData, p.marshal())
+}
+
+// CardID is the Card Holder Unique Identifier (CHUID), which identifies the card
+// to the host. Some smart card stacks, such as macOS's CryptoTokenKit, ignore
+// cards that don't have one.
+//
+// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=19
+type CardID struct {
+	// GUID is the Card Universally Unique Identifier. It should be unique to
+	// the card, for example a random UUID.
+	GUID [16]byte
+}
+
+// CardID returns the CHUID stored on the card. It can be called before
+// SetCardID. If no CHUID has been set, the returned error wraps ErrNotFound.
+func (yk *YubiKey) CardID() (*CardID, error) {
+	obj, err := ykGetObject(yk.tx, objectCardID)
+	if err != nil {
+		return nil, err
+	}
+	var id CardID
+	if err := id.unmarshal(obj); err != nil {
+		return nil, fmt.Errorf("unmarshal card id: %v", err)
+	}
+	return &id, nil
+}
+
+// SetCardID stores a CHUID with the provided GUID, replacing any existing one.
+//
+// The CHUID is unsigned and uses the same non-federal FASC-N and expiration date
+// as YubiKey Manager ("ykman piv objects generate chuid"). It identifies the
+// card to the host, but can't be used to authenticate the card.
+func (yk *YubiKey) SetCardID(key []byte, id *CardID) error {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
+		return fmt.Errorf("authenticating with management key: %w", err)
+	}
+	return ykPutObject(yk.tx, objectCardID, id.marshal())
+}
+
+var (
+	// FASC-N for a non-federal issuer, as generated by YubiKey Manager and
+	// yubico-piv-tool: agency code 9999, system code 9999, credential number
+	// 999999, encoded as BCD with odd parity.
+	//
+	// https://github.com/Yubico/yubikey-manager/blob/5.9.0/ykman/piv.py#L501
+	cardIDFASCN = []byte{
+		0xd4, 0xe7, 0x39, 0xda, 0x73, 0x9c, 0xed, 0x39,
+		0xce, 0x73, 0x9d, 0x83, 0x68, 0x58, 0x21, 0x08,
+		0x42, 0x10, 0x84, 0x21, 0xc8, 0x42, 0x10, 0xc3,
+		0xeb,
+	}
+	// Expiration date, YYYYMMDD.
+	cardIDExpiration = []byte("20300101")
+)
+
+func (c *CardID) marshal() []byte {
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=41
+	data := marshalASN1(0x30, cardIDFASCN)
+	data = append(data, marshalASN1(0x34, c.GUID[:])...)
+	data = append(data, marshalASN1(0x35, cardIDExpiration)...)
+	// Issuer Asymmetric Signature, empty since the CHUID is unsigned.
+	data = append(data, marshalASN1(0x3e, nil)...)
+	// Error Detection Code
+	data = append(data, marshalASN1(0xfe, nil)...)
+	return data
+}
+
+func (c *CardID) unmarshal(b []byte) error {
+	for len(b) > 0 {
+		var (
+			err error
+			v   asn1.RawValue
+		)
+		b, err = asn1.Unmarshal(b, &v)
+		if err != nil {
+			return fmt.Errorf("unmarshal card id field: %v", err)
+		}
+		if !bytes.HasPrefix(v.FullBytes, []byte{0x34}) {
+			continue
+		}
+		// 0x34 indicates GUID
+		if len(v.Bytes) != len(c.GUID) {
+			return fmt.Errorf("invalid guid length: %d", len(v.Bytes))
+		}
+		copy(c.GUID[:], v.Bytes)
+		return nil
+	}
+	return fmt.Errorf("no guid")
 }
 
 func supportsVersion(v *version, major, minor, patch byte) bool {

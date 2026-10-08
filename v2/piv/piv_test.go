@@ -390,6 +390,77 @@ func TestMetadata(t *testing.T) {
 	} else if !bytes.Equal(*got.ManagementKey, wantKey) {
 		t.Errorf("wanted management key=0x%x, got=0x%x", wantKey, got.ManagementKey)
 	}
+	if flags := testPivmanFlags(t, yk); flags != pivmanFlagKeyStored {
+		t.Errorf("pivman flags after storing key, got=0x%x, want=0x%x", flags, pivmanFlagKeyStored)
+	}
+
+	if err := yk.SetMetadata(DefaultManagementKey, &Metadata{}); err != nil {
+		t.Fatalf("clearing metadata: %v", err)
+	}
+	if flags := testPivmanFlags(t, yk); flags != 0 {
+		t.Errorf("pivman flags after clearing key, got=0x%x, want=0x0", flags)
+	}
+}
+
+// testPivmanFlags returns the flags in the pivman data object, or 0 if the
+// object isn't set.
+func testPivmanFlags(t *testing.T, yk *YubiKey) byte {
+	t.Helper()
+	obj, err := ykGetObject(yk.tx, objectPivmanData)
+	if errors.Is(err, ErrNotFound) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("getting pivman data: %v", err)
+	}
+	var p pivmanData
+	if err := p.unmarshal(obj); err != nil {
+		t.Fatalf("parsing pivman data: %v", err)
+	}
+	return p.flags
+}
+
+func TestMetadataPreservesPivmanData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+	func() {
+		yk, close := newTestYubiKey(t)
+		defer close()
+		if err := yk.Reset(); err != nil {
+			t.Fatalf("resetting yubikey: %v", err)
+		}
+	}()
+
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	// Pivman data with the PUK blocked flag set, as written by YubiKey
+	// Manager. This only records the flag, the PUK isn't actually blocked.
+	if err := yk.authManagementKey(DefaultManagementKey); err != nil {
+		t.Fatalf("authenticating: %v", err)
+	}
+	if err := ykPutObject(yk.tx, objectPivmanData, []byte{0x80, 0x03, 0x81, 0x01, 0x01}); err != nil {
+		t.Fatalf("setting pivman data: %v", err)
+	}
+
+	key := []byte{
+		0x09, 0xd9, 0x87, 0x81, 0xfb, 0xdc, 0xc9, 0xb6,
+		0x91, 0xa2, 0x05, 0x80, 0x6e, 0xc0, 0xba, 0x84,
+		0x31, 0xac, 0x0d, 0x9f, 0x59, 0xa5, 0x00, 0xad,
+	}
+	if err := yk.SetMetadata(DefaultManagementKey, &Metadata{ManagementKey: &key}); err != nil {
+		t.Fatalf("setting metadata: %v", err)
+	}
+	if flags := testPivmanFlags(t, yk); flags != 0x01|pivmanFlagKeyStored {
+		t.Errorf("pivman flags after storing key, got=0x%x, want=0x%x", flags, 0x01|pivmanFlagKeyStored)
+	}
+	if err := yk.SetMetadata(DefaultManagementKey, &Metadata{}); err != nil {
+		t.Fatalf("clearing metadata: %v", err)
+	}
+	if flags := testPivmanFlags(t, yk); flags != 0x01 {
+		t.Errorf("pivman flags after clearing key, got=0x%x, want=0x1", flags)
+	}
 }
 
 func TestMetadataUnmarshal(t *testing.T) {
@@ -509,5 +580,213 @@ func TestMetadataAdditoinalFields(t *testing.T) {
 	}
 	if !bytes.Equal(want, got) {
 		t.Errorf("(*Metadata.marshal, got=0x%x, want=0x%x", got, want)
+	}
+}
+
+func TestPivmanDataUnmarshal(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      string
+		wantFlags byte
+		wantRest  string
+	}{
+		{"empty", "", 0, ""},
+		{"key stored", "8003810102", pivmanFlagKeyStored, ""},
+		{
+			// PUK blocked, salt and PIN timestamp, as written by YubiKey Manager.
+			"other fields",
+			"801b8101018210000102030405060708090a0b0c0d0e0f830401020304",
+			0x01,
+			"8210000102030405060708090a0b0c0d0e0f830401020304",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, _ := hex.DecodeString(test.data)
+			var p pivmanData
+			if err := p.unmarshal(data); err != nil {
+				t.Fatalf("parsing pivman data: %v", err)
+			}
+			if p.flags != test.wantFlags {
+				t.Errorf("(*pivmanData).unmarshal, got flags=0x%x, want flags=0x%x", p.flags, test.wantFlags)
+			}
+			if got := hex.EncodeToString(p.rest); got != test.wantRest {
+				t.Errorf("(*pivmanData).unmarshal, got rest=0x%s, want rest=0x%s", got, test.wantRest)
+			}
+		})
+	}
+}
+
+func TestPivmanDataUnmarshalInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"wrong tag", "8803810102"},
+		{"truncated", "80038101"},
+		{"long flags", "800481020102"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, _ := hex.DecodeString(test.data)
+			var p pivmanData
+			if err := p.unmarshal(data); err == nil {
+				t.Errorf("(*pivmanData).unmarshal(0x%s), expected error", test.data)
+			}
+		})
+	}
+}
+
+func TestPivmanDataMarshal(t *testing.T) {
+	rest, _ := hex.DecodeString("8210000102030405060708090a0b0c0d0e0f830401020304")
+	tests := []struct {
+		name string
+		p    pivmanData
+		want string
+	}{
+		{"empty", pivmanData{}, ""},
+		{"key stored", pivmanData{flags: pivmanFlagKeyStored}, "8003810102"},
+		{
+			"other fields",
+			pivmanData{flags: 0x01 | pivmanFlagKeyStored, rest: rest},
+			"801b8101038210000102030405060708090a0b0c0d0e0f830401020304",
+		},
+		{
+			// The flags are omitted when clear, like YubiKey Manager does.
+			"no flags",
+			pivmanData{rest: rest},
+			"80188210000102030405060708090a0b0c0d0e0f830401020304",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := hex.EncodeToString(test.p.marshal()); got != test.want {
+				t.Errorf("(*pivmanData).marshal, got=0x%s, want=0x%s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCardID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+	func() {
+		yk, close := newTestYubiKey(t)
+		defer close()
+		if err := yk.Reset(); err != nil {
+			t.Fatalf("resetting yubikey: %v", err)
+		}
+	}()
+
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	if _, err := yk.CardID(); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("getting card id before setting it, got err=%v, want ErrNotFound", err)
+	}
+
+	for _, want := range []CardID{
+		{GUID: [16]byte{
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+			0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+		}},
+		// Setting the card id again replaces the old one.
+		{GUID: [16]byte{
+			0xf0, 0xe0, 0xd0, 0xc0, 0xb0, 0xa0, 0x90, 0x80,
+			0x70, 0x60, 0x50, 0x40, 0x30, 0x20, 0x10, 0x00,
+		}},
+	} {
+		if err := yk.SetCardID(DefaultManagementKey, &want); err != nil {
+			t.Fatalf("setting card id: %v", err)
+		}
+		got, err := yk.CardID()
+		if err != nil {
+			t.Fatalf("getting card id: %v", err)
+		}
+		if got.GUID != want.GUID {
+			t.Errorf("wanted guid=0x%x, got=0x%x", want.GUID, got.GUID)
+		}
+	}
+}
+
+func TestCardIDMarshal(t *testing.T) {
+	// Generated by YubiKey Manager's generate_chuid() for the same GUID.
+	want := "3019d4e739da739ced39ce739d836858210842108421c84210c3eb" +
+		"34100102030405060708090a0b0c0d0e0f10" +
+		"35083230333030313031" +
+		"3e00" +
+		"fe00"
+	c := CardID{GUID: [16]byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+	}}
+	if got := hex.EncodeToString(c.marshal()); got != want {
+		t.Errorf("(*CardID).marshal, got=0x%s, want=0x%s", got, want)
+	}
+}
+
+func TestCardIDUnmarshal(t *testing.T) {
+	wantGUID := [16]byte{
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+	}
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			"yubikey manager",
+			"3019d4e739da739ced39ce739d836858210842108421c84210c3eb" +
+				"34100102030405060708090a0b0c0d0e0f10" +
+				"35083230333030313031" +
+				"3e00" +
+				"fe00",
+		},
+		{
+			// Optional fields from SP 800-73-4 and a signature, which aren't
+			// interpreted.
+			"other fields",
+			"ee020100" + // Buffer Length
+				"3019d4e739da739ced39ce739d836858210842108421c84210c3eb" +
+				"310400000000" + // Agency Code
+				"34100102030405060708090a0b0c0d0e0f10" +
+				"35083230333030313031" +
+				"3e03010203" + // Issuer Asymmetric Signature
+				"fe00",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, _ := hex.DecodeString(test.data)
+			var c CardID
+			if err := c.unmarshal(data); err != nil {
+				t.Fatalf("parsing card id: %v", err)
+			}
+			if c.GUID != wantGUID {
+				t.Errorf("(*CardID).unmarshal, got guid=0x%x, want guid=0x%x", c.GUID, wantGUID)
+			}
+		})
+	}
+}
+
+func TestCardIDUnmarshalInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"empty", ""},
+		{"no guid", "3e00fe00"},
+		{"short guid", "340f0102030405060708090a0b0c0d0e0f"},
+		{"truncated guid", "34100102030405060708"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, _ := hex.DecodeString(test.data)
+			var c CardID
+			if err := c.unmarshal(data); err == nil {
+				t.Errorf("(*CardID).unmarshal(0x%s), expected error", test.data)
+			}
+		})
 	}
 }
