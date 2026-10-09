@@ -317,3 +317,63 @@ directly use browser U2F challenges for smart cards.
 
 [go-ykpiv]: https://github.com/paultag/go-ykpiv
 [openssh-u2f]: https://marc.info/?l=openssh-unix-dev&m=157259802529972&w=2
+
+
+### RSA decryption options and compatibility
+
+RSA keys returned by `YubiKey.PrivateKey` implement `crypto.Decrypter`.
+For new protocols, use explicit OAEP options and matching encryption parameters:
+
+```go
+ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, publicKey, plaintext, nil)
+// Handle err before using ciphertext.
+plaintext, err = decrypter.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{
+    Hash: crypto.SHA256, MGFHash: crypto.SHA256,
+})
+```
+
+Choose the algorithm from trusted protocol metadata. Never retry failed OAEP
+ciphertext with PKCS #1 v1.5. Existing exported APIs and valid historical ciphertext
+remain supported; reencryption is not required to read existing data.
+
+`Hash`, `MGFHash` (zero defaults to `Hash`), and
+`Label` are honored. The selected hashes must be linked into the caller's
+binary, as required by `crypto.Hash.Available`.
+
+Valid PKCS #1 v1.5 ciphertext remains supported with nil options or
+`&rsa.PKCS1v15DecryptOptions{SessionKeyLen: 0}`. This legacy decryption mode
+is deprecated and should be restricted to trusted historical migration. Go 1.26
+also deprecates PKCS #1 v1.5 session-key decryption because protocol behavior is
+fragile. Applications that expose padding failures can still form a decryption
+oracle; normalizing errors alone does not remove that risk. Avoid sharing an RSA
+key between an exposed legacy decryptor and OAEP.
+
+This changes behavior that previously ignored options and scanned for a zero
+delimiter without fully validating PKCS #1 v1.5 padding:
+
+- Malformed padding returns `rsa.ErrDecryption` with nil plaintext instead of
+  returning a suffix from an invalid block. Error strings/sentinels therefore
+  change. Valid empty plaintext is now accepted.
+- Ciphertext must contain exactly the modulus-size number of bytes, retaining
+  leading zero bytes, and its integer value must be less than the modulus.
+- Unsupported or typed-nil options, invalid/unavailable hashes, bad public
+  inputs, and impossible padding/session sizes fail before authentication.
+  Rejected inputs can consequently change whether a PIN prompt occurs.
+- A positive `SessionKeyLen` now consumes exactly that many bytes from the
+  supplied random reader before authentication. Invalid padding or a different
+  plaintext length produces a random fallback of that length; random-reader and
+  transport failures return nil plaintext and an error. Callers must follow
+  `crypto/rsa.DecryptPKCS1v15SessionKey` protocol requirements and avoid revealing
+  whether the recovered session key is correct.
+
+Public method signatures, RSA signing, and non-RSA key behavior are unchanged.
+Software regression tests cover decoding, factory preflight, and logical APDU
+construction/parsing. They do not validate physical card behavior, PIN/touch
+handling, PC/SC command chaining, device timing, or FIPS compliance.
+
+Historical regression fixtures come from the actual pinned `go-utils/v6 v6.2.1`
+RSA encryptor used by `go-yubikey`. They cover valid single-block RSA-1024/2048
+ciphertext (including leading zero bytes) with both nil and explicit legacy
+options. Empty and concatenated helper output remains outside the one-block
+PIV contract. The fixtures contain only generated software keys and public test
+data; see `v2/piv/testdata/README.md`.

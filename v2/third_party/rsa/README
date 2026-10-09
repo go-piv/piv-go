@@ -1,2 +1,12 @@
 This directory contains a fork of internal crypto/rsa logic to allow computation
-of PSS padding.
+of PSS padding and decoding of RSA ciphertext padding after a smart card performs
+the raw RSA private-key operation.
+
+decrypt.go adapts the software decoding portions of Go 1.20.14:
+https://github.com/golang/go/blob/go1.20.14/src/crypto/rsa/rsa.go
+https://github.com/golang/go/blob/go1.20.14/src/crypto/rsa/pkcs1v15.go
+
+The private-key operation and Go's internal/boring backend are omitted. The
+constant-time OAEP/PKCS #1 v1.5 validation and session-key conditional copy are
+retained. Public inputs and options are checked before invoking the raw RSA
+callback. The existing mgf1XOR implementation is shared with PSS.
